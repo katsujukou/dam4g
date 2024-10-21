@@ -1,0 +1,9 @@
+package: 
+  name: compiler
+  dependencies: 
+    - console
+    - effect
+    - fmt
+    - lists
+    - stringutils
+    - transformers
