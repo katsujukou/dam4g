@@ -1,0 +1,10 @@
+{
+  "type": "module",
+  "scripts": {
+    "compile": "cd .. && spago build -p simulator",
+    "dev": "pnpm run compile && vite"
+  },
+  "devDependencies": {
+    "vite": "^5.4.9"
+  }
+}

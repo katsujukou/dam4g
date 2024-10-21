@@ -1,0 +1,6 @@
+package:
+  name: simulator 
+  dependencies:
+    - halogen 
+    - halogen-hooks
+    - halogen-helix
