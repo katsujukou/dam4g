@@ -1,6 +1,8 @@
 package:
-  name: simulator 
+  name: simulator
   dependencies:
-    - halogen 
-    - halogen-hooks
+    - aff-promise
+    - arraybuffer
+    - halogen
     - halogen-helix
+    - halogen-hooks
