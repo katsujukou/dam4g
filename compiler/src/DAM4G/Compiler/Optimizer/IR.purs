@@ -2,7 +2,7 @@ module DAM4G.Compiler.Optimizer.IR where
 
 import Prelude
 
-import DAM4G.Compiler.Name (Ident(..), ModuleName)
+import DAM4G.Compiler.Name (Ident, ModuleName)
 import DAM4G.Compiler.Value (Constant)
 import Data.Generic.Rep (class Generic)
 import Data.Newtype (class Newtype)
@@ -48,8 +48,6 @@ data Primitive
   | P_i32_neq
   | P_i32_le -- less than or equal to
   | P_i32_lt -- less than
-  | P_i32_ge -- greater than or equal to
-  | P_i32_gt
   -- Logical operations
   | P_log_and -- logical and 
   | P_log_or -- logical or

@@ -5,23 +5,20 @@ import Prelude
 import Data.Newtype (class Newtype)
 import Fmt as Fmt
 
-newtype CodeLabel = CodeLabel Int 
+newtype CodeLabel = CodeLabel Int
 
-derive instance Eq CodeLabel 
+derive instance Eq CodeLabel
+derive instance Ord CodeLabel
 derive instance Newtype CodeLabel _
 instance Show CodeLabel where
   show (CodeLabel lbl) = Fmt.fmt @"(CodeLabel {lbl})" { lbl }
 
-newtype ByteOffset = ByteOffset Int 
-
 type Labeled a =
   { lbl :: CodeLabel
-  , it :: a 
+  , it :: a
   }
 
-derive instance Newtype ByteOffset _ 
--- instance Show ByteOffset where
---   show (ByteOffset ofs) = Fmt.fmt @"(ByteOffset {ofs})" { ofs: toHex ofs }
---     where
---       toHex = toStringAs hexadecimal >>> padStart 0 "0000" >>> 
+newtype ByteOffset = ByteOffset Int
+
+derive instance Newtype ByteOffset _
 

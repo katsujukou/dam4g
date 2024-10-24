@@ -1,9 +1,12 @@
-package: 
+package:
   name: compiler
-  dependencies: 
+  dependencies:
+    - arraybuffer
     - console
     - effect
     - fmt
     - lists
+    - node-fs
+    - ordered-collections
     - stringutils
     - transformers

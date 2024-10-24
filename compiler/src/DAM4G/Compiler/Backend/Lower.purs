@@ -17,7 +17,7 @@ import Data.List as List
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
 import Data.Traversable (for)
-import Data.Tuple (Tuple(..), fst, snd)
+import Data.Tuple (Tuple(..), fst)
 import Data.Tuple.Nested (type (/\), (/\))
 import Partial.Unsafe (unsafeCrashWith)
 
@@ -26,9 +26,17 @@ type ELTerm = IR.ELC IR.Ann
 type LowerState =
   { moduleName :: ModuleName
   , init :: Array Instruction
+  , ns :: Maybe String
   , next :: Int
   , more :: List { lbl :: CodeLabel, arity :: Int, term :: ELTerm }
   }
+
+getNamespace :: LowerM (Maybe String)
+getNamespace = get <#> _.ns
+
+setNamespace :: Maybe String -> LowerM Unit
+setNamespace ns = do
+  modify_ \s0 -> s0 { ns = ns }
 
 type LowerM a = StateT LowerState Identity a
 
@@ -44,23 +52,27 @@ lower m@(IR.Module { name }) = fst $ runLowerM initialState $ compileModule m
     , next: 0
     , init: []
     , more: List.Nil
+    , ns: Nothing
     }
 
 isTail :: List Instruction -> Boolean
 isTail = case _ of
   KReturn : _ -> true
-  KStop : _ -> true
   _ -> false
 
 newLabel :: LowerM CodeLabel
 newLabel = do
-  s0@{ next } <- get
+  s0@{ next, ns } <- get
   put (s0 { next = next + 1 })
   pure $ CodeLabel next
 
--- mkBranch :: _ 
--- mkBranch = case _ of 
---   c@(KReturn : _) -> c 
+mkBranch :: List Instruction -> LowerM (Instruction /\ List Instruction)
+mkBranch = case _ of
+  k@(KReturn : _) -> pure $ KReturn /\ k
+  k@(branch@(KBranch _) : _) -> pure $ branch /\ k
+  k -> do
+    lbl <- newLabel
+    pure $ (KBranch lbl) /\ (KLabel lbl : k)
 
 compileModule :: IR.Module -> LowerM Program
 compileModule (IR.Module m) = tailRecM go (m.decls /\ empty (unwrap m.name))
@@ -76,9 +88,9 @@ compileModule (IR.Module m) = tailRecM go (m.decls /\ empty (unwrap m.name))
             ( Program $ p
                 { text = if codeLength text > 0 then Array.snoc p.text text else p.text
                 , init = p.init <> init
-                , syms = case ident of 
-                    Ident "it" -> p.syms 
-                    _ -> p.syms `Array.snoc` ident 
+                , syms = case ident of
+                    Ident "it" -> p.syms
+                    _ -> p.syms `Array.snoc` ident
                 }
             )
       IR.Rec delcs' -> unsafeCrashWith "Not implemented!"
@@ -87,12 +99,13 @@ compileDecl :: { ident :: Ident, term :: ELTerm } -> LowerM { init :: Array Inst
 compileDecl { ident, term } = do
   resetToCompile
   resetLabel
+  setNamespace (Just $ unwrap ident)
   { init: _, text: _ }
     <$> compileInitializerSection
     <*> compileTextSection
   where
   compileInitializerSection = do
-    code <- compileTerm Nothing term (contOfIdent ident)
+    code <- compileTerm ident term (contOfIdent ident)
     pure $ List.foldl Array.snoc [] code
 
   compileTextSection = do
@@ -111,17 +124,16 @@ compileDecl { ident, term } = do
   compileMore :: List Instruction -> LowerM (List Instruction)
   compileMore k = do
     getToCompile >>= case _ of
-      Just cb
-        | 1 <- cb.arity -> do
-            code <- compileTerm Nothing cb.term (KReturn : k)
-            pure $ KLabel (Just $ unwrap ident) cb.lbl : KStartFun : code
-        | otherwise -> do
-            code <- compileTerm Nothing cb.term (KReturn : k)
-            pure $ KLabel (Just $ unwrap ident) cb.lbl : KStartFun :
-              nGrab (cb.arity - 1) code
+      Just cb -> do
+        let (CodeLabel _) = cb.lbl
+        code <- compileTerm ident cb.term (KReturn : k)
+        if cb.arity == 1 then do
+          compileMore $ KLabel cb.lbl : code
+        else do
+          compileMore $ KLabel cb.lbl : nGrab (cb.arity - 1) code
       Nothing -> pure k
 
-  getToCompile :: LowerM (Maybe { lbl :: CodeLabel, arity :: Int, term :: ELTerm })
+  getToCompile :: LowerM (Maybe _)
   getToCompile = do
     s0@{ more } <- get
     for (List.uncons more) \{ head: cb, tail: rest } -> do
@@ -145,8 +157,8 @@ nGrab n = go n
   go 0 code = code
   go n' code = go (n' - 1) (KGrab : code)
 
-compileTerm :: Maybe CodeLabel -> ELTerm -> List Instruction -> LowerM (List Instruction)
-compileTerm _ = go
+compileTerm :: Ident -> ELTerm -> List Instruction -> LowerM (List Instruction)
+compileTerm (Ident ident) = go
   where
   go term k = case term of
     ELVar _ (Var n) -> pure $ KAccess n : k
@@ -165,10 +177,27 @@ compileTerm _ = go
       | otherwise -> do
           lbl <- newLabel
           addToCompile lbl arity tmBody
-          pure $ KClosure lbl : k
+          pure $ KClosure ident lbl : k
+    ELLet _ tmArgs tmBody -> do
+      let
+        k1 =
+          if isTail k then k
+          else KEndLet (Array.length tmArgs) : k
+      k2 <- go tmBody k1
+      let
+        compArgs = Array.uncons >>> case _ of
+          Nothing -> pure k2
+          Just { head: arg, tail: rest } -> do
+            k' <- (KLet : _) <$> compArgs rest
+            go arg k'
+      compArgs tmArgs
     ELPrim _ prim args -> case prim of
       PGetGlobal id -> pure $ KGetGlobal id : k
+      PSetGlobal id
+        | [ arg ] <- args -> go arg $ KSetGlobal id : k
+        | otherwise -> unsafeCrashWith "Impossible"
       _ -> compArgList args (compPrim prim k)
+    ELIf _ cond ifSo notSo -> compTest cond ifSo notSo k
     _ -> unsafeCrashWith "Not Implemented"
 
   compPrim prim k = case prim of
@@ -182,11 +211,12 @@ compileTerm _ = go
     P_i32_neq -> K_i32_neq : k
     P_i32_le -> K_i32_le : k
     P_i32_lt -> K_i32_lt : k
-    P_i32_ge -> K_i32_lt : K_log_not : k 
-    P_i32_gt -> K_i32_le : K_log_not : k
     P_log_and -> K_log_and : k
     P_log_or -> K_log_or : k
-    P_log_not -> K_log_not : k
+    P_log_not
+      | KBranchIf lbl : k' <- k -> KBranchIfNot lbl : k'
+      | KBranchIfNot lbl : k' <- k -> KBranchIf lbl : k'
+      | otherwise -> K_log_not : k
     P_log_xor -> K_log_xor : k
     _ -> unsafeCrashWith "Impoissible"
 
@@ -197,3 +227,10 @@ compileTerm _ = go
       | otherwise -> do
           code <- go term k
           compArgList rest (KPush : code)
+
+  compTest cond ifSo notSo k = do
+    branch1 /\ k' <- mkBranch k
+    lbl2 <- newLabel
+    k2 <- go notSo k'
+    k1 <- go ifSo (branch1 : KLabel lbl2 : k2)
+    go cond (KBranchIfNot lbl2 : k1)

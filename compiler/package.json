@@ -1,0 +1,7 @@
+{
+  "scripts": {
+    "compile": "cd .. && spago build -p compiler && purs-backend-es build",
+    "bundle": "cd .. && purs-backend-es bundle-module -s -m DAM4G.Compiler --minify -t simulator/assets/compiler.min.js",
+    "release": "pnpm run compile && pnpm run bundle"
+  }
+}
