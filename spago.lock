@@ -4,40 +4,59 @@ workspace:
       path: compiler
       core:
         dependencies:
+          - arraybuffer
           - console
           - effect
           - fmt
           - lists
+          - node-fs
+          - ordered-collections
           - stringutils
           - transformers
         build_plan:
+          - aff
+          - arraybuffer
+          - arraybuffer-types
           - arrays
           - bifunctors
           - console
           - const
           - contravariant
           - control
+          - datetime
           - distributive
           - effect
           - either
           - enums
           - exceptions
           - exists
+          - float32
           - fmt
           - foldable-traversable
+          - foreign
           - functions
           - functors
           - gen
           - identity
           - integers
           - invariant
+          - js-date
           - lazy
           - lists
           - maybe
           - newtype
+          - node-buffer
+          - node-event-emitter
+          - node-fs
+          - node-path
+          - node-streams
           - nonempty
+          - now
+          - nullable
           - numbers
+          - ordered-collections
           - orders
+          - parallel
           - partial
           - prelude
           - profunctor
@@ -52,6 +71,7 @@ workspace:
           - tuples
           - type-equality
           - typelevel-prelude
+          - uint
           - unfoldable
           - unsafe-coerce
       test:
@@ -114,11 +134,16 @@ workspace:
       path: simulator
       core:
         dependencies:
+          - aff-promise
+          - arraybuffer
           - halogen
           - halogen-helix
           - halogen-hooks
         build_plan:
           - aff
+          - aff-promise
+          - arraybuffer
+          - arraybuffer-types
           - arrays
           - avar
           - bifunctors
@@ -135,6 +160,7 @@ workspace:
           - enums
           - exceptions
           - exists
+          - float32
           - foldable-traversable
           - foreign
           - foreign-object
@@ -178,6 +204,7 @@ workspace:
           - tuples
           - type-equality
           - typelevel-prelude
+          - uint
           - unfoldable
           - unsafe-coerce
           - unsafe-reference
@@ -728,6 +755,35 @@ packages:
       - tailrec
       - transformers
       - unsafe-coerce
+  aff-promise:
+    type: registry
+    version: 4.0.0
+    integrity: sha256-Kq5EupbUpXeUXx4JqGQE7/RTTz/H6idzWhsocwlEFhM=
+    dependencies:
+      - aff
+      - foreign
+  arraybuffer:
+    type: registry
+    version: 13.2.0
+    integrity: sha256-fNsR19aRqcUis9C28MpyMigIlfX6f6Hq1up4IcTOvDU=
+    dependencies:
+      - arraybuffer-types
+      - arrays
+      - effect
+      - float32
+      - functions
+      - gen
+      - maybe
+      - nullable
+      - prelude
+      - tailrec
+      - uint
+      - unfoldable
+  arraybuffer-types:
+    type: registry
+    version: 3.0.2
+    integrity: sha256-mQKokysYVkooS4uXbO+yovmV/s8b138Ws3zQvOwIHRA=
+    dependencies: []
   arrays:
     type: registry
     version: 7.3.0
@@ -898,6 +954,14 @@ packages:
     integrity: sha256-A0JQHpTfo1dNOj9U5/Fd3xndlRSE0g2IQWOGor2yXn8=
     dependencies:
       - unsafe-coerce
+  float32:
+    type: registry
+    version: 2.0.0
+    integrity: sha256-PRRdv0zNZ8JdohWTO3ZSLzt51ymxK4/NHtGTwuMWHtw=
+    dependencies:
+      - gen
+      - maybe
+      - prelude
   fmt:
     type: registry
     version: 0.2.1
@@ -1223,6 +1287,70 @@ packages:
     dependencies:
       - prelude
       - safe-coerce
+  node-buffer:
+    type: registry
+    version: 9.0.0
+    integrity: sha256-PWE2DJ5ruBLCmeA/fUiuySEFmUJ/VuRfyrnCuVZBlu4=
+    dependencies:
+      - arraybuffer-types
+      - effect
+      - maybe
+      - nullable
+      - st
+      - unsafe-coerce
+  node-event-emitter:
+    type: registry
+    version: 3.0.0
+    integrity: sha256-Qw0MjsT4xRH2j2i4K8JmRjcMKnH5z1Cw39t00q4LE4w=
+    dependencies:
+      - effect
+      - either
+      - functions
+      - maybe
+      - nullable
+      - prelude
+      - unsafe-coerce
+  node-fs:
+    type: registry
+    version: 9.2.0
+    integrity: sha256-Sg0vkXycEzkEerX6hLccz21Ygd9w1+QSk1thotRZPGI=
+    dependencies:
+      - datetime
+      - effect
+      - either
+      - enums
+      - exceptions
+      - functions
+      - integers
+      - js-date
+      - maybe
+      - node-buffer
+      - node-path
+      - node-streams
+      - nullable
+      - partial
+      - prelude
+      - strings
+      - unsafe-coerce
+  node-path:
+    type: registry
+    version: 5.0.0
+    integrity: sha256-pd82nQ+2l5UThzaxPdKttgDt7xlsgIDLpPG0yxDEdyE=
+    dependencies:
+      - effect
+  node-streams:
+    type: registry
+    version: 9.0.0
+    integrity: sha256-2n6dq7YWleTDmD1Kur/ul7Cn08IvWrScgPf+0PgX2TQ=
+    dependencies:
+      - aff
+      - effect
+      - either
+      - exceptions
+      - node-buffer
+      - node-event-emitter
+      - nullable
+      - prelude
   nonempty:
     type: registry
     version: 7.0.0
@@ -1433,6 +1561,17 @@ packages:
     dependencies:
       - prelude
       - type-equality
+  uint:
+    type: registry
+    version: 7.0.0
+    integrity: sha256-fQ30YjiKz9DS6yqRdmK+WARVbJhpZDDTRcpFw675b6M=
+    dependencies:
+      - effect
+      - enums
+      - gen
+      - maybe
+      - numbers
+      - prelude
   unfoldable:
     type: registry
     version: 6.0.0
