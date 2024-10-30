@@ -1,3 +1,15 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@font-face {
+  font-family: 'HackGen Console NF';
+  src: url('./assets/fonts/HackGen35ConsoleNF-Regular.ttf') format('truetype');
+  font-weight: normal;
+}
+
+@font-face {
+  font-family: 'HackGen Console NF';
+  src: url('./assets/fonts/HackGen35ConsoleNF-Bold.ttf') format('truetype');
+  font-weight: bold;
+}

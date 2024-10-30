@@ -2,8 +2,19 @@ module DAM4G.Simulator.Instruction where
 
 import Prelude
 
+import Data.Either (Either)
 import Data.Generic.Rep (class Generic)
+import Data.Maybe (Maybe)
 import Data.Show.Generic (genericShow)
+import Data.Tuple.Nested (type (/\))
+
+data CodeLabel = CodeLabel String Int
+
+derive instance Eq CodeLabel
+derive instance Ord CodeLabel
+derive instance Generic CodeLabel _
+instance Show CodeLabel where
+  show = genericShow
 
 data Constant
   = CstBool Boolean
@@ -20,11 +31,11 @@ data Instruction
   | KLabel Int Int
   -- Constant and literals 
   | KQuote Constant
-  | KGetGlobal Int
-  | KSetGlobal Int
+  | KGetGlobal (Either Int String)
+  | KSetGlobal (Either Int String)
   | KField Int
   -- Function handling
-  | KClosure Int Int
+  | KClosure (Either CodeLabel Int)
   | KApply
   | KTailApply
   | KGrab
@@ -62,3 +73,4 @@ derive instance Eq Instruction
 derive instance Generic Instruction _
 instance Show Instruction where
   show = genericShow
+

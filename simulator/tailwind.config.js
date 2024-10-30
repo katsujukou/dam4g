@@ -1,8 +1,14 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: [ "./src/**/*.purs"],
+  content: ["./src/**/*.purs"],
   theme: {
-    extend: {},
+    extend: {
+      fontFamily: {
+        HackGenNF: [
+          "HackGen Console NF"
+        ]
+      }
+    },
   },
   plugins: [],
 }

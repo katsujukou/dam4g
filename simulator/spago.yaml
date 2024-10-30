@@ -3,6 +3,8 @@ package:
   dependencies:
     - aff-promise
     - arraybuffer
+    - fmt
     - halogen
     - halogen-helix
     - halogen-hooks
+    - stringutils
