@@ -54,6 +54,7 @@ newtype GdoFile = GdoFile
   , text :: Array Bytecode
   , entry :: Array Bytecode
   , syms :: Array String
+  , lbls :: Array (Array Int)
   }
 
 derive instance Newtype GdoFile _

@@ -18,7 +18,7 @@ data Instruction
   | KSetGlobal Ident
   | KField Int
   -- Function handling
-  | KClosure String CodeLabel
+  | KClosure CodeLabel
   | KApply
   | KTailApply
   | KGrab

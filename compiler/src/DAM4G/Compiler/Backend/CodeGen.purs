@@ -11,7 +11,7 @@ import DAM4G.Compiler.Backend.Instruction (Instruction(..))
 import DAM4G.Compiler.Backend.Program (CodeSection(..), Program(..))
 import DAM4G.Compiler.Value (Constant(..))
 import DAM4G.Compiler.Version (compilerVersion)
-import Data.Array (catMaybes, fold, foldMap)
+import Data.Array (findIndex, fold, foldMap)
 import Data.Array as Array
 import Data.Array.NonEmpty as NonEmptyArray
 import Data.Array.ST as STArray
@@ -20,14 +20,13 @@ import Data.ArrayBuffer.Types (ArrayBuffer, Int8Array)
 import Data.Char (toCharCode)
 import Data.Foldable (foldl, for_, sum)
 import Data.Map as Map
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Newtype (unwrap)
 import Data.String.CodeUnits (toCharArray)
+import Data.Traversable (for)
 import Data.Tuple (snd)
 import Data.Tuple.Nested ((/\))
 import Effect (Effect)
-import Effect.Class.Console (logShow)
-import Effect.Unsafe (unsafePerformEffect)
 import Partial.Unsafe (unsafeCrashWith)
 
 emit :: GdoFile -> Effect ArrayBuffer
@@ -50,7 +49,9 @@ emit (GdoFile gdofile) = do
       # fold
       # Array.cons (HalfWord $ Array.length gdofile.syms)
 
-    body = [ gdofile.text, gdofile.entry, symbolSection ]
+    labelsSection = gdofile.lbls # Array.fold <#> HalfWord
+
+    body = [ gdofile.text, gdofile.entry, symbolSection, labelsSection ]
       # prependOffsetTable HalfWord
       # fold
   -- sectionOffsetTable = gdmfile
@@ -96,8 +97,8 @@ emit (GdoFile gdofile) = do
 mkGdoFile :: Program -> GdoFile
 mkGdoFile (Program p) = do
   let
-    ofsTbl /\ textSection = writeTextSection
-    entrySection = writeEntrySection
+    ofsTbl /\ textSection /\ textLabels = writeTextSection
+    entrySection /\ entryLabels = writeEntrySection
   -- syms = p.syms
   --   <#>
   --     ( unwrap
@@ -111,32 +112,38 @@ mkGdoFile (Program p) = do
         , compilerVersion
         }
     , text: do
-        let
-          textOffsetTbl = p.syms
-            <#> (\sym -> Map.lookup (unwrap sym) ofsTbl <#> HalfWord)
-            # catMaybes
-        textOffsetTbl <> textSection
+        -- let
+        --   textOffsetTbl = p.text
+        --     <#> (\(CodeSection { lbl: sym }) -> Map.lookup sym ofsTbl <#> HalfWord)
+        --     # catMaybes
+        -- [ HalfWord $ Array.length p.text ] <> textOffsetTbl <> textSection
+        textSection
     , entry: entrySection
     -- , symOfs: 
     , syms: map unwrap p.syms
     -- , symOfs: map HalfWord $ NonEmptyArray.init $ NonEmptyArray.cons' 0 $ Array.length <$> syms
+    , lbls: entryLabels <> textLabels
     }
   where
   writeTextSection = ST.run do
-    offsets <- STRef.new Map.empty
+    identOfsTbl <- STRef.new Map.empty
     ofsRef <- STRef.new 0
     bytes <- STArray.new
-    for_ p.text \(CodeSection { code, lbl }) -> do
+    labels <- for p.text \(CodeSection { code, lbl: ident }) -> do
+      identOfs <- STRef.read ofsRef
+      _ <- STRef.modify (Map.insert ident identOfs) identOfsTbl
       let lblIndices = resolveLabels code
-      ofs <- STRef.read ofsRef
-      _ <- STRef.modify (Map.insert lbl ofs) offsets
+      relOfsRef <- STRef.new 0
       for_ code \instr -> do
-        ofs' <- STRef.read ofsRef
-        _ <- STArray.pushAll (opcode ofs' lblIndices (unwrap <$> p.syms) instr) bytes
-        STRef.modify (_ + opcodeBytes instr) ofsRef
+        relOfs <- STRef.read relOfsRef
+        _ <- STArray.pushAll (opcode relOfs lblIndices (unwrap <$> p.syms) instr) bytes
+        STRef.modify (_ + opcodeBytes instr) relOfsRef
+      relOfs <- STRef.read relOfsRef
+      _ <- STRef.modify (_ + relOfs) ofsRef
+      pure $ writeLabels (unwrap <$> p.syms) identOfs lblIndices
     code <- STArray.freeze bytes
-    tbl <- STRef.read offsets
-    pure (tbl /\ code)
+    tbl <- STRef.read identOfsTbl
+    pure (tbl /\ code /\ fold labels)
 
   writeEntrySection = ST.run do
     let lblIndices = resolveLabels p.init
@@ -146,7 +153,16 @@ mkGdoFile (Program p) = do
       ofs <- STRef.read ofsRef
       STArray.pushAll (opcode ofs lblIndices (unwrap <$> p.syms) instr) bytes
         *> STRef.modify (_ + opcodeBytes instr) ofsRef
-    STArray.freeze bytes
+    code <- STArray.freeze bytes
+    pure $ code /\ (writeLabels (unwrap <$> p.syms) 0 lblIndices)
+
+  writeLabels :: Array String -> Int -> Map.Map CodeLabel Int -> Array (Array Int)
+  writeLabels namespaces identOfs = Map.toUnfoldable
+    >>> map \((CodeLabel ns lbl) /\ ofs) ->
+      [ fromMaybe (-1) (ns >>= \name -> findIndex (_ == name) namespaces)
+      , lbl
+      , identOfs + ofs
+      ]
 
   resolveLabels :: _ Instruction -> Map.Map CodeLabel Int
   resolveLabels code = code
@@ -165,57 +181,62 @@ opcode
   -> Array String
   -> Instruction
   -> Array Bytecode
-opcode ofs lblIndices namespaces = case _ of
-  KNoop -> [ Byte 0xFE ]
-  KStop -> [ Byte 0xFF ]
-  KLabel _ -> []
+opcode ofs lblIndices namespaces =
+  case _ of
+    KNoop -> [ Byte 0xFE ]
+    KStop -> [ Byte 0xFF ]
+    KLabel _ -> []
 
-  KQuote cst -> case cst of
-    CstBool true -> [ Byte 0xC0, Byte 0x01 ]
-    CstBool false -> [ Byte 0xC0, Byte 0x00 ]
-    CstInt n -> [ Byte 0xC1, Word n ]
-  KGetGlobal sym -> [ Byte 0xC8, Sym (unwrap sym) ]
-  KSetGlobal sym -> [ Byte 0xC9, Sym (unwrap sym) ]
-  KField n -> [ Byte 0xCA, Byte n ]
+    KQuote cst -> case cst of
+      CstBool true -> [ Byte 0xC0, Byte 0x01 ]
+      CstBool false -> [ Byte 0xC0, Byte 0x00 ]
+      CstInt n -> [ Byte 0xC1, Word n ]
+    KGetGlobal sym -> [ Byte 0xC8, Sym (unwrap sym) ]
+    KSetGlobal sym -> [ Byte 0xC9, Sym (unwrap sym) ]
+    KField n -> [ Byte 0xCA, Byte n ]
 
-  KClosure ns (CodeLabel lbl)
-    | Just n <- Array.findIndex (_ == ns) namespaces -> [ Byte 0x80, NamedLabel n ofs ]
-    | otherwise -> unsafeCrashWith "Impossible"
-  KApply -> [ Byte 0x81 ]
-  KPush -> [ Byte 0x83 ]
-  KPushMark -> [ Byte 0x84 ]
-  KGrab -> [ Byte 0x85 ]
-  KReturn -> [ Byte 0x60 ]
-  KTailApply -> [ Byte 0x66 ]
+    KClosure (CodeLabel Nothing _) -> unsafeCrashWith "Impossible: Closure referencing null-namespace label"
+    KClosure (CodeLabel (Just ns) lbl)
+      | Just n <- Array.findIndex (_ == ns) namespaces ->
+          [ Byte 0x80, NamedLabel n lbl ]
+      | otherwise ->
+          unsafeCrashWith "Impossible: Closure referencing Undefined labels"
+    KApply -> [ Byte 0x81 ]
+    KPush -> [ Byte 0x83 ]
+    KPushMark -> [ Byte 0x84 ]
+    KGrab -> [ Byte 0x85 ]
+    KReturn -> [ Byte 0x60 ]
+    KTailApply -> [ Byte 0x66 ]
 
-  KAccess n -> [ Byte 0xE1, Byte n ]
-  KLet -> [ Byte 0xE2 ]
-  KEndLet n -> [ Byte 0xE3, Byte n ]
-  KDummies n -> [ Byte 0xE4, Byte n ]
-  KUpdate n -> [ Byte 0xE5, Byte n ]
+    KAccess n -> [ Byte 0xE1, Byte n ]
+    KLet -> [ Byte 0xE2 ]
+    KEndLet n -> [ Byte 0xE3, Byte n ]
+    KDummies n -> [ Byte 0xE4, Byte n ]
+    KUpdate n -> [ Byte 0xE5, Byte n ]
 
-  K_i32_add -> [ Byte 0xA1 ]
-  K_i32_sub -> [ Byte 0xA2 ]
-  K_i32_mul -> [ Byte 0xA3 ]
-  K_i32_div -> [ Byte 0xA4 ]
-  K_i32_mod -> [ Byte 0xA5 ]
-  K_i32_equ -> [ Byte 0xA6 ]
-  K_i32_neq -> [ Byte 0xA7 ]
-  K_i32_le -> [ Byte 0xA8 ]
-  K_i32_lt -> [ Byte 0xA9 ]
+    K_i32_add -> [ Byte 0xA1 ]
+    K_i32_sub -> [ Byte 0xA2 ]
+    K_i32_mul -> [ Byte 0xA3 ]
+    K_i32_div -> [ Byte 0xA4 ]
+    K_i32_mod -> [ Byte 0xA5 ]
+    K_i32_equ -> [ Byte 0xA6 ]
+    K_i32_neq -> [ Byte 0xA7 ]
+    K_i32_le -> [ Byte 0xA8 ]
+    K_i32_lt -> [ Byte 0xA9 ]
 
-  K_log_and -> [ Byte 0xAA ]
-  K_log_or -> [ Byte 0xAB ]
-  K_log_xor -> [ Byte 0xAC ]
-  K_log_not -> [ Byte 0xAD ]
+    K_log_and -> [ Byte 0xAA ]
+    K_log_or -> [ Byte 0xAB ]
+    K_log_xor -> [ Byte 0xAC ]
+    K_log_not -> [ Byte 0xAD ]
 
-  KBranch lbl -> resolveRelative 0xB0 lbl
-  KBranchIf lbl -> resolveRelative 0xB1 lbl
-  KBranchIfNot lbl -> resolveRelative 0xB2 lbl
+    KBranch lbl -> resolveRelative 0xB0 lbl
+    KBranchIf lbl -> resolveRelative 0xB1 lbl
+    KBranchIfNot lbl -> resolveRelative 0xB2 lbl
   where
-  resolveRelative byte lbl = case Map.lookup lbl lblIndices of
-    Just n -> [ Byte byte, HalfWord (n - ofs) ]
-    _ -> unsafeCrashWith "Impossible"
+  resolveRelative byte lbl =
+    case Map.lookup lbl lblIndices of
+      Just n -> [ Byte byte, HalfWord (n - ofs) ]
+      _ -> unsafeCrashWith "Impossible"
 
 opcodeBytes :: Instruction -> Int
 opcodeBytes = case _ of
@@ -227,7 +248,7 @@ opcodeBytes = case _ of
   KSetGlobal _ -> 5
   KField _ -> 2
   KAccess _ -> 2
-  KClosure _ _ -> 5
+  KClosure _ -> 5
   KEndLet _ -> 2
   KDummies _ -> 2
   KUpdate _ -> 2

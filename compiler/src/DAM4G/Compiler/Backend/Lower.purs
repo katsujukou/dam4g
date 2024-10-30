@@ -14,6 +14,8 @@ import Data.Array as Array
 import Data.Identity (Identity(..))
 import Data.List (List, (:))
 import Data.List as List
+import Data.Map (Map)
+import Data.Map as Map
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
 import Data.Traversable (for)
@@ -23,20 +25,18 @@ import Partial.Unsafe (unsafeCrashWith)
 
 type ELTerm = IR.ELC IR.Ann
 
+type Namespace = Maybe String
+
+global :: Namespace
+global = Nothing
+
 type LowerState =
   { moduleName :: ModuleName
   , init :: Array Instruction
-  , ns :: Maybe String
-  , next :: Int
+  , next :: Map Namespace Int
   , more :: List { lbl :: CodeLabel, arity :: Int, term :: ELTerm }
+  , ns :: Namespace
   }
-
-getNamespace :: LowerM (Maybe String)
-getNamespace = get <#> _.ns
-
-setNamespace :: Maybe String -> LowerM Unit
-setNamespace ns = do
-  modify_ \s0 -> s0 { ns = ns }
 
 type LowerM a = StateT LowerState Identity a
 
@@ -49,7 +49,7 @@ lower m@(IR.Module { name }) = fst $ runLowerM initialState $ compileModule m
   where
   initialState =
     { moduleName: name
-    , next: 0
+    , next: Map.singleton Nothing 0
     , init: []
     , more: List.Nil
     , ns: Nothing
@@ -62,9 +62,14 @@ isTail = case _ of
 
 newLabel :: LowerM CodeLabel
 newLabel = do
-  s0@{ next, ns } <- get
-  put (s0 { next = next + 1 })
-  pure $ CodeLabel next
+  s0@{ ns, next } <- get
+  case Map.lookup ns next of
+    Just l -> do
+      put (s0 { next = Map.update (Just <<< (_ + 1)) ns next })
+      pure $ CodeLabel ns l
+    Nothing -> do
+      put (s0 { next = Map.insert ns 1 next })
+      pure $ CodeLabel ns 0
 
 mkBranch :: List Instruction -> LowerM (Instruction /\ List Instruction)
 mkBranch = case _ of
@@ -82,33 +87,30 @@ compileModule (IR.Module m) = tailRecM go (m.decls /\ empty (unwrap m.name))
     Just { head, tail: rest } -> case head of
       IR.NonRec (IR.Decl { ident, term }) -> do
         { init, text } <- compileDecl { ident, term }
-        pure $ Loop $
-          Tuple
-            rest
-            ( Program $ p
-                { text = if codeLength text > 0 then Array.snoc p.text text else p.text
-                , init = p.init <> init
-                , syms = case ident of
-                    Ident "it" -> p.syms
-                    _ -> p.syms `Array.snoc` ident
-                }
-            )
+        pure $ Loop $ Tuple
+          rest
+          ( Program $ p
+              { text = if codeLength text > 0 then Array.snoc p.text text else p.text
+              , init = p.init <> init
+              , syms = p.syms `Array.snoc` ident
+              }
+          )
       IR.Rec delcs' -> unsafeCrashWith "Not implemented!"
 
 compileDecl :: { ident :: Ident, term :: ELTerm } -> LowerM { init :: Array Instruction, text :: CodeSection }
 compileDecl { ident, term } = do
   resetToCompile
-  resetLabel
-  setNamespace (Just $ unwrap ident)
-  { init: _, text: _ }
-    <$> compileInitializerSection
-    <*> compileTextSection
+  init <- compileInitializerSection
+  text <- compileTextSection
+  pure { init, text }
   where
   compileInitializerSection = do
+    setNamespace global
     code <- compileTerm ident term (contOfIdent ident)
-    pure $ List.foldl Array.snoc [] code
+    pure $ (List.foldl Array.snoc [] code)
 
   compileTextSection = do
+    setNamespace (Just $ unwrap ident)
     code <- compileMore List.Nil
     pure $
       CodeSection
@@ -124,13 +126,14 @@ compileDecl { ident, term } = do
   compileMore :: List Instruction -> LowerM (List Instruction)
   compileMore k = do
     getToCompile >>= case _ of
-      Just cb -> do
-        let (CodeLabel _) = cb.lbl
-        code <- compileTerm ident cb.term (KReturn : k)
-        if cb.arity == 1 then do
-          compileMore $ KLabel cb.lbl : code
-        else do
-          compileMore $ KLabel cb.lbl : nGrab (cb.arity - 1) code
+      Just cb
+        | CodeLabel (Just ident') _ <- cb.lbl -> do
+            code <- compileTerm (Ident ident') cb.term (KReturn : k)
+            if cb.arity == 1 then do
+              compileMore $ KLabel cb.lbl : code
+            else do
+              compileMore $ KLabel cb.lbl : nGrab (cb.arity - 1) code
+        | otherwise -> unsafeCrashWith "Impossible"
       Nothing -> pure k
 
   getToCompile :: LowerM (Maybe _)
@@ -143,13 +146,15 @@ compileDecl { ident, term } = do
   resetToCompile :: LowerM Unit
   resetToCompile = modify_ (\s0 -> s0 { more = List.Nil })
 
-  resetLabel :: LowerM Unit
-  resetLabel = modify_ \s0 -> s0 { next = 0 }
+setNamespace :: Namespace -> LowerM Unit
+setNamespace ns = modify_ \s0 -> s0 { ns = ns }
 
-addToCompile :: CodeLabel -> Int -> ELTerm -> LowerM Unit
+addToCompile :: CodeLabel -> Int -> ELTerm -> LowerM CodeLabel
+addToCompile (CodeLabel Nothing _) _ _ = unsafeCrashWith "Impossible"
 addToCompile lbl arity term = do
   s@{ more } <- get
   put (s { more = { lbl, arity, term } : more })
+  pure lbl
 
 nGrab :: Int -> List Instruction -> List Instruction
 nGrab n = go n
@@ -158,7 +163,8 @@ nGrab n = go n
   go n' code = go (n' - 1) (KGrab : code)
 
 compileTerm :: Ident -> ELTerm -> List Instruction -> LowerM (List Instruction)
-compileTerm (Ident ident) = go
+compileTerm (Ident ident) =
+  go
   where
   go term k = case term of
     ELVar _ (Var n) -> pure $ KAccess n : k
@@ -175,9 +181,11 @@ compileTerm (Ident ident) = go
       | isTail k -> do
           nGrab arity <$> go tmBody k
       | otherwise -> do
-          lbl <- newLabel
-          addToCompile lbl arity tmBody
-          pure $ KClosure ident lbl : k
+          lbl <- withNamespace (Just ident) do
+            lbl <- newLabel
+            lbl2 <- newLabel
+            addToCompile lbl arity tmBody
+          pure $ KClosure lbl : k
     ELLet _ tmArgs tmBody -> do
       let
         k1 =
@@ -234,3 +242,11 @@ compileTerm (Ident ident) = go
     k2 <- go notSo k'
     k1 <- go ifSo (branch1 : KLabel lbl2 : k2)
     go cond (KBranchIfNot lbl2 : k1)
+
+  withNamespace :: forall a. Namespace -> LowerM a -> LowerM a
+  withNamespace ns' m = do
+    ns0 <- get <#> _.ns
+    modify_ (\s0 -> s0 { ns = ns' })
+    a <- m
+    modify_ (\s -> s { ns = ns0 })
+    pure a
