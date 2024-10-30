@@ -3,6 +3,7 @@ package:
   dependencies:
     - arraybuffer
     - console
+    - debug
     - effect
     - fmt
     - lists

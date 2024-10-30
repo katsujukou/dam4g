@@ -37,52 +37,102 @@ compile _ = do
     program = IR.Module
       { name: ModuleName "Sample"
       , decls:
+          -- [ IR.NonRec $ IR.Decl
+          --     { ident: Ident "add"
+          --     , term: ELAbs unit 2
+          --         ( ELPrim unit P_i32_add
+          --             [ ELVar unit (Var 1)
+          --             , ELVar unit (Var 0)
+          --             ]
+          --         )
+          --     }
+          -- , IR.NonRec $ IR.Decl
+          --     { ident: Ident "f"
+          --     , term: ELAbs unit 1
+          --         ( ELLet unit
+          --             [ ELAbs unit 1
+          --                 ( ELPrim unit P_i32_sub
+          --                     [ ELVar unit (Var 0)
+          --                     , ELConst unit (CstInt 1)
+          --                     ]
+          --                 )
+          --             , ( ELApp unit
+          --                   (ELPrim unit (PGetGlobal $ Ident "add") [])
+          --                   [ ELConst unit (CstInt 1) ]
+          --               )
+          --             ]
+          --             ( ELIf unit
+          --                 ( ELPrim unit P_log_not
+          --                     [ ELPrim unit P_i32_le
+          --                         [ ELVar unit (Var 2)
+          --                         , ELConst unit (CstInt 0)
+          --                         ]
+          --                     ]
+          --                 )
+          --                 (ELApp unit (ELVar unit (Var 0)) [ ELVar unit (Var 2) ])
+          --                 (ELApp unit (ELVar unit (Var 1)) [ ELVar unit (Var 2) ])
+          --             )
+          --         )
+          --     }
+          -- , IR.NonRec $ IR.Decl
+          --     { ident: Ident "it"
+          --     , term:
+          --         ELApp unit
+          --           (ELPrim unit (PGetGlobal $ Ident "f") [])
+          --           [ ELConst unit (CstInt 42)
+          --           ]
+          --     }
+          -- ]
           [ IR.NonRec $ IR.Decl
-              { ident: Ident "add"
-              , term: ELAbs unit 2
-                  ( ELPrim unit P_i32_add
-                      [ ELVar unit (Var 1)
-                      , ELVar unit (Var 0)
-                      ]
-                  )
-              }
-          , IR.NonRec $ IR.Decl
-              { ident: Ident "f"
-              , term: ELAbs unit 1
+              { ident: Ident "it"
+              , term:
                   ( ELLet unit
-                      [ ELAbs unit 1
-                          ( ELPrim unit P_i32_sub
-                              [ ELVar unit (Var 0)
-                              , ELConst unit (CstInt 1)
+                      [ ELAbs unit 3
+                          ( ELPrim unit P_i32_add
+                              [ ELVar unit (Var 2)
+                              , ELPrim unit P_i32_add
+                                  [ ELVar unit (Var 1), ELVar unit (Var 0) ]
                               ]
                           )
-                      , ( ELApp unit
-                            (ELPrim unit (PGetGlobal $ Ident "add") [])
-                            [ ELConst unit (CstInt 1) ]
-                        )
                       ]
-                      ( ELIf unit
-                          ( ELPrim unit P_log_not
-                              [ ELPrim unit P_i32_le
-                                  [ ELVar unit (Var 2)
-                                  , ELConst unit (CstInt 0)
-                                  ]
-                              ]
-                          )
-                          (ELApp unit (ELVar unit (Var 0)) [ ELVar unit (Var 2) ])
-                          (ELApp unit (ELVar unit (Var 1)) [ ELVar unit (Var 2) ])
+                      ( ELApp unit
+                          (ELVar unit (Var 0))
+                          [ ELConst unit (CstInt 1)
+                          , ELConst unit (CstInt 3)
+                          , ELConst unit (CstInt 5)
+                          ]
                       )
                   )
               }
-          , IR.NonRec $ IR.Decl
-              { ident: Ident "it"
-              , term:
-                  ELApp unit
-                    (ELPrim unit (PGetGlobal $ Ident "f") [])
-                    [ ELConst unit (CstInt 42)
-                    ]
-              }
           ]
+      -- [ IR.NonRec $ IR.Decl
+      --     { "ident": Ident "that"
+      --     , "term":
+      --         --   ELAbs unit 1
+      --         ( ELIf unit
+      --             (ELConst unit $ CstBool true)
+      --             (ELConst unit $ CstInt 1)
+      --             (ELConst unit $ CstInt 2)
+      --         )
+      --     }
+      -- --   ]
+
+      -- , IR.NonRec $ IR.Decl
+      --     { "ident": Ident "it"
+      --     , "term":
+      --         ELAbs unit 1
+      --           ( ELPrim unit
+      --               P_i32_add
+      --               [ ( ELIf unit
+      --                     (ELVar unit (Var 0))
+      --                     (ELConst unit $ CstInt 1)
+      --                     (ELConst unit $ CstInt 2)
+      --                 )
+      --               , ELConst unit (CstInt 42)
+      --               ]
+      --           )
+      --     }
+      -- ]
       }
   pure $
     Right
