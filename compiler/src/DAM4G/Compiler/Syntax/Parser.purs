@@ -4,13 +4,15 @@ import Prelude
 
 import Control.Alt (class Alt, (<|>))
 import Control.Lazy (class Lazy, defer)
-import Control.Monad.Rec.Class (Step(..), tailRec, tailRecM)
+import Control.Monad.Rec.Class (Step(..), tailRec)
 import DAM4G.Compiler.Constant (AtomicConstant(..))
 import DAM4G.Compiler.Name (ConstructorName(..), Ident(..), OperatorName(..), isConstructorName)
+import DAM4G.Compiler.Types (Associativity(..))
 import DAM4G.Compiler.Syntax.CST (Ann, Binder(..), Declaration(..), Expr(..), Keyword(..), Module(..), Pattern(..), PatternMatrix(..), Recursivity(..), SourceToken, Token(..), Type_(..), binderAnn, exprAnn, patternAnn, typeAnn)
 import DAM4G.Compiler.Syntax.Error (ParseError, ParseErrorDesc(..))
 import DAM4G.Compiler.Syntax.Lexer (LexResult(..), runLexer, tokenize)
-import DAM4G.Compiler.Syntax.Source (SourcePos(..), SourcePhrase, mapPhrase, (..), (@@), (~))
+import DAM4G.Compiler.Syntax.Source (SourcePos(..), mapPhrase, (..), (@@), (~))
+import DAM4G.Compiler.Syntax.Source as Source
 import Data.Array as Array
 import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Array.NonEmpty as NonEmptyArray
@@ -18,12 +20,15 @@ import Data.Array.Partial as ArrayP
 import Data.Bifunctor (lmap)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..), maybe)
+import Data.Newtype (wrap)
 import Data.String.Regex as Re
 import Data.String.Regex.Flags (unicode)
 import Data.String.Regex.Unsafe (unsafeRegex)
 import Data.Tuple (fst, snd)
 import Data.Tuple.Nested (type (/\), (/\))
 import Partial.Unsafe (unsafeCrashWith, unsafePartial)
+
+type SourcePhrase a = Source.SourcePhrase () a
 
 type ParserState =
   { src :: String
@@ -209,6 +214,35 @@ matchfn = token (TokReserved KW_matchfn)
 with :: Parser SourceToken
 with = token (TokReserved KW_with)
 
+def :: Parser SourceToken
+def = token (TokReserved KW_def)
+
+alias :: Parser SourceToken
+alias = token (TokReserved KW_alias)
+
+assoc :: Parser SourceToken
+assoc = tokenSuchThat case _ of
+  TokIdent (Ident "assoc") -> true
+  _ -> false
+
+left :: Parser SourceToken
+left = tokenSuchThat case _ of
+  TokIdent (Ident "left") -> true
+  _ -> false
+
+right :: Parser SourceToken
+right = tokenSuchThat case _ of
+  TokIdent (Ident "right") -> true
+  _ -> false
+
+none :: Parser SourceToken
+none = tokenSuchThat case _ of
+  TokIdent (Ident "none") -> true
+  _ -> false
+
+type_ :: Parser SourceToken
+type_ = token (TokReserved KW_type)
+
 true_ :: Parser SourceToken
 true_ = tokenSuchThat case _ of
   TokBool _ true -> true
@@ -323,6 +357,7 @@ parseExpr4 = defer \_ -> do
     <|> parseExprIf
     <|> parseExprLet
     <|> parseExprMatch
+    <|> parseExprMatchFn
     <|> parseExpr5
 
 parseExprFunc :: Parser (Expr Ann)
@@ -362,29 +397,28 @@ parseExprLet = defer \_ -> do
 
 parseExprMatch :: Parser (Expr Ann)
 parseExprMatch = defer \_ -> do
-  ((({ at: loc1 } /\ heads) /\ with) /\ matrix) <- match
+  ((({ at: loc1 } /\ heads) /\ _) /\ matrix) <- match
     `followedBy` matchHeads
     `followedBy` with
-    `followedBy` matchMatrix
+    `followedBy` parseMatchMatrix
 
   pure $
     ExprMatch
       { loc: loc1 .. loc1 }
       heads
-      (PatternMatrix matrix)
+      matrix
   where
   matchHeads = defer \_ -> do
     exp <- parseExpr5
     exps <- many (snd <$> comma `followedBy` parseExpr5)
-    case Array.last exps of
-      Nothing -> pure [ exp ]
-      Just lst -> pure $ Array.cons exp exps
+    pure $ NonEmptyArray.cons' exp exps
 
-  matchMatrix = defer \_ -> do
-    ln <- matchMatrixLine
-    lines <- many matchMatrixLine
-    pure $ Array.cons ln lines
-
+parseMatchMatrix :: Parser (PatternMatrix Ann)
+parseMatchMatrix = defer \_ -> do
+  ln <- matchMatrixLine
+  lines <- many matchMatrixLine
+  pure $ PatternMatrix $ Array.cons ln lines
+  where
   matchMatrixLine = defer \_ -> do
     (((_ /\ pats) /\ _) /\ act) <- pipe
       `followedBy` matchMatrixPatterns
@@ -398,6 +432,21 @@ parseExprMatch = defer \_ -> do
     pat <- parsePattern
     pats <- many (snd <$> comma `followedBy` parsePattern)
     pure $ Array.cons pat pats
+
+parseExprMatchFn :: Parser (Expr Ann)
+parseExprMatchFn = defer \_ -> do
+  { at: loc1 } <- matchfn
+  pats <- parsePatterns1
+  matrix <- parseMatchMatrix
+  pure $ ExprMatchFn { loc: loc1 .. loc1 }
+    pats
+    matrix
+  where
+  parsePatterns1 = defer \_ -> do
+    pat <- parsePattern
+    many parsePattern >>= case _ of
+      [] -> pure $ NonEmptyArray.singleton pat
+      pats -> pure $ NonEmptyArray.cons' pat pats
 
 parseBinders :: Parser (SourcePhrase (NonEmptyArray (Binder Ann)))
 parseBinders = defer \_ -> do
@@ -615,12 +664,13 @@ parseDeclaration :: Parser (Declaration Ann)
 parseDeclaration = defer \_ -> do
   parseDeclarationDeclRec
     <|> parseDeclarationDecl
+    <|> parseDeclarationAlias
 
 parseDeclarationDecl :: Parser (Declaration Ann)
 parseDeclarationDecl = defer \_ -> do
-  ({ at: loc1 } /\ { name, pats, exp }) /\ { at: loc2 } <- let_
-    `followedBy` parseDeclarationBinder
-    `followedBy` semicolon
+  { at: loc1 } <- let_
+  { name, pats, exp } <- parseDeclarationBinder
+  { at: loc2 } <- semicolon
   pure $ Decl
     { loc: loc1 .. loc2 }
     name
@@ -630,7 +680,7 @@ parseDeclarationDecl = defer \_ -> do
 parseDeclarationDeclRec :: Parser (Declaration Ann)
 parseDeclarationDeclRec = defer \_ -> do
   { at: loc1 } <- fst <$> (let_ `followedBy` rec_)
-  binder@{ exp } <- parseDeclarationBinder
+  binder <- parseDeclarationBinder
   binders <- many do
     (_ /\ b) <- and_ `followedBy` parseDeclarationBinder
     pure b
@@ -640,7 +690,7 @@ parseDeclarationDeclRec = defer \_ -> do
       { loc: loc1 .. loc2 }
       (Array.cons binder binders)
 
-parseDeclarationBinder :: Parser _
+parseDeclarationBinder :: Parser { name :: SourcePhrase Ident, pats :: Array (Pattern Ann), exp :: Expr Ann }
 parseDeclarationBinder = defer \_ -> do
   ((name /\ pats) /\ _) /\ exp <- ident
     `followedBy` (many parsePattern)
@@ -664,13 +714,48 @@ parsePatterns p = defer \_ -> do
       in
         pure $ NonEmptyArray.cons' pat pats @@ loc
 
+parseDeclarationAlias :: Parser (Declaration Ann)
+parseDeclarationAlias = defer \_ -> do
+  ((({ at: loc1 } /\ _) /\ name) /\ _) /\ opname <- def
+    `followedBy` alias
+    `followedBy` ident
+    `followedBy` as
+    `followedBy` operator
+  _ <- leftParens
+  a <- parseAssociativity
+  _ <- comma
+  precedence <- int
+  { at: loc2 } <- rightParens
+
+  pure $
+    DeclAlias { loc: loc1 .. loc2 }
+      name
+      opname
+      a
+      precedence
+  where
+  parseAssociativity = do
+    _ /\ a <- assoc `followedBy` (left <|> right <|> none)
+    pure $ a # mapPhrase case _ of
+      TokIdent (Ident id) -> case id of
+        "left" -> LeftAssoc
+        "right" -> RightAssoc
+        "none" -> NonAssoc
+        _ -> unsafeCrashWith "Impossible"
+      _ -> unsafeCrashWith "Impossible"
+
 parse :: String -> String -> Either ParseError (Module Ann)
 parse name src = tailRec go ([] /\ initialState src)
   where
   go (decls /\ st) =
     case runParser parseDeclaration st of
       Right decl /\ st' -> Loop $ (Array.snoc decls decl) /\ st'
-      Left err /\ _
+      Left err /\ { pos: eof }
         | UnexpectedToken TokEOF <- err.desc
-        , [ { it: TokEOF } ] <- err.toks -> Done $ Right $ Module { name, decls }
+        , [ { it: TokEOF } ] <- err.toks ->
+            Done $ Right $ Module
+              { loc: SourcePos 1 1 ~ eof
+              , name: wrap name
+              , decls
+              }
         | otherwise -> Done $ Left err

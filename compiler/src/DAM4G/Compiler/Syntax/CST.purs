@@ -3,14 +3,17 @@ module DAM4G.Compiler.Syntax.CST where
 import Prelude
 
 import DAM4G.Compiler.Constant (AtomicConstant)
-import DAM4G.Compiler.Name (Ident, OperatorName)
-import DAM4G.Compiler.Syntax.Source (SourceLoc, SourcePhrase)
+import DAM4G.Compiler.Name (Ident, ModuleName(..), OperatorName(..))
+import DAM4G.Compiler.Syntax.Source (SourceLoc(..))
+import DAM4G.Compiler.Syntax.Source as Source
+import DAM4G.Compiler.Types (Associativity(..))
 import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Generic.Rep (class Generic)
 import Data.Newtype (class Newtype)
 import Data.Show.Generic (genericShow)
 import Fmt as Fmt
 
+type SourcePhrase a = Source.SourcePhrase () a
 data Token
   = TokLeftParens
   | TokRightParens
@@ -54,7 +57,7 @@ data Keyword
   | KW_with
   | KW_matchfn
   | KW_def
-  | KW_set
+  | KW_type
   | KW_alias
   | KW_as
 
@@ -84,7 +87,7 @@ data Expr a
   | ExprLet a Recursivity (NonEmptyArray (Binder a)) (Expr a)
   | ExprConstructor a Ident (Array (Expr a))
   | ExprIf a (Expr a) (Expr a) (Expr a)
-  | ExprMatch a (Array (Expr a)) (PatternMatrix a)
+  | ExprMatch a (NonEmptyArray (Expr a)) (PatternMatrix a)
   | ExprMatchFn a (NonEmptyArray (Pattern a)) (PatternMatrix a)
   | ExprTyped a (Expr a) (Type_ a)
   | ExprParensed a (Expr a)
@@ -189,6 +192,9 @@ binderAnn (Binder a _ _) = a
 data Declaration a
   = Decl a (SourcePhrase Ident) (Array (Pattern a)) (Expr a)
   | DeclRec a (Array { name :: SourcePhrase Ident, pats :: Array (Pattern a), exp :: Expr a })
+  | DeclAlias a (SourcePhrase Ident) (SourcePhrase OperatorName) (SourcePhrase Associativity) (SourcePhrase Int)
+
+-- | DeclSet a (SourcePhrase Ident) ()
 
 derive instance Functor Declaration
 derive instance Generic (Declaration a) _
@@ -197,7 +203,8 @@ instance Show a => Show (Declaration a) where
   show = genericShow
 
 newtype Module a = Module
-  { name :: String
+  { name :: ModuleName
+  , loc :: SourceLoc
   , decls :: Array (Declaration a)
   }
 

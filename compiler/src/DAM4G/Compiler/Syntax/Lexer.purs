@@ -6,7 +6,8 @@ import Control.Alt (class Alt, (<|>))
 import DAM4G.Compiler.Name (Ident(..))
 import DAM4G.Compiler.Syntax.CST (Keyword(..), SourceToken, Token(..))
 import DAM4G.Compiler.Syntax.Error (ParseErrorDesc(..), PositionedError)
-import DAM4G.Compiler.Syntax.Source (SourcePhrase, SourcePos, advancePos, charDelta, from, mapPhrase, stringDelta, (..), (@@), (~))
+import DAM4G.Compiler.Syntax.Source (SourcePos, advancePos, charDelta, from, mapPhrase, stringDelta, (..), (@@), (~))
+import DAM4G.Compiler.Syntax.Source as Source
 import Data.Array (length)
 import Data.Array.NonEmpty as NonEmptyArray
 import Data.Function.Uncurried (Fn2, mkFn2, runFn2)
@@ -17,11 +18,10 @@ import Data.String.CodeUnits as SCU
 import Data.String.Regex as Re
 import Data.String.Regex.Flags (unicode)
 import Data.String.Regex.Unsafe (unsafeRegex)
-import Debug (spy)
-import Effect.Class.Console as Console
-import Effect.Unsafe (unsafePerformEffect)
 import Fmt as Fmt
 import Partial.Unsafe (unsafeCrashWith)
+
+type SourcePhrase a = Source.SourcePhrase () a
 
 type LexerState = { src :: String, pos :: SourcePos }
 
@@ -232,9 +232,11 @@ parseKeyword = case _ of
   "rec" -> Just KW_rec
   "and" -> Just KW_and
   "match" -> Just KW_match
+  "matchfn" -> Just KW_matchfn
   "with" -> Just KW_with
   "as" -> Just KW_as
   "def" -> Just KW_def
+  "type" -> Just KW_type
   "alias" -> Just KW_alias
   _ -> Nothing
 

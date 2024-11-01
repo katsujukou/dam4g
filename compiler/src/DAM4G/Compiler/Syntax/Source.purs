@@ -53,17 +53,18 @@ span (SourceLoc { from: lc1 }) (SourceLoc { to: lc2 }) = SourceLoc { from: lc1, 
 
 infix 5 span as ..
 
-type SourcePhrase a =
+type SourcePhrase r a =
   { it :: a
   , at :: SourceLoc
+  | r
   }
 
-at :: forall a. a -> SourceLoc -> SourcePhrase a
+at :: forall a. a -> SourceLoc -> SourcePhrase () a
 at a = { it: a, at: _ }
 
 infix 7 at as @@
 
-mapPhrase :: forall a b. (a -> b) -> SourcePhrase a -> SourcePhrase b
+mapPhrase :: forall a b. (a -> b) -> SourcePhrase () a -> SourcePhrase () b
 mapPhrase f ph@{ it: a } = ph { it = f a }
 
 data SourceDelta = SourceDelta Int Int
@@ -95,3 +96,8 @@ advancePos (SourcePos l c) (SourceDelta dl dc) = go l c dl
     0 -> SourcePos l' (c' + dc)
     n -> go (l' + 1) 1 (n - 1)
 
+emptyPos :: SourcePos
+emptyPos = SourcePos 0 0
+
+emptyLoc :: SourceLoc
+emptyLoc = emptyPos ~ emptyPos

@@ -9,5 +9,6 @@ package:
     - lists
     - node-fs
     - ordered-collections
+    - record-studio
     - stringutils
     - transformers

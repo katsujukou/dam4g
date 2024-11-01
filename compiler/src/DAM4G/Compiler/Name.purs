@@ -2,7 +2,9 @@ module DAM4G.Compiler.Name where
 
 import Prelude
 
+import Data.Generic.Rep (class Generic)
 import Data.Newtype (class Newtype)
+import Data.Show.Generic (genericShow)
 import Data.String.Regex as Re
 import Data.String.Regex.Flags (unicode)
 import Data.String.Regex.Unsafe (unsafeRegex)
@@ -19,6 +21,8 @@ instance Show Ident where
 newtype ModuleName = ModuleName String
 
 derive instance Newtype ModuleName _
+derive instance Eq ModuleName
+derive instance Ord ModuleName
 instance Show ModuleName where
   show (ModuleName mn) = Fmt.fmt @"(ModuleName {mn})" { mn }
 
@@ -42,3 +46,17 @@ isConstructorName :: Ident -> Boolean
 isConstructorName (Ident name) = constrRegex `Re.test` name
   where
   constrRegex = unsafeRegex """[A-Z][a-zA-Z0-9'_]*""" unicode
+
+data Qualified a = Qualified ModuleName a
+
+derive instance Functor Qualified
+derive instance Eq a => Eq (Qualified a)
+derive instance Ord a => Ord (Qualified a)
+derive instance Generic (Qualified a) _
+instance Show a => Show (Qualified a) where
+  show = genericShow
+
+unqualify :: forall a. Qualified a -> a
+unqualify (Qualified _ a) = a
+
+type GlobalName = Qualified Ident
