@@ -12,6 +12,7 @@ workspace:
           - lists
           - node-fs
           - ordered-collections
+          - record-studio
           - stringutils
           - transformers
         build_plan:
@@ -39,6 +40,7 @@ workspace:
           - functions
           - functors
           - gen
+          - heterogeneous
           - identity
           - integers
           - invariant
@@ -63,6 +65,7 @@ workspace:
           - prelude
           - profunctor
           - record
+          - record-studio
           - refs
           - safe-coerce
           - st
@@ -76,6 +79,7 @@ workspace:
           - uint
           - unfoldable
           - unsafe-coerce
+          - variant
       test:
         dependencies: []
         build_plan: []
@@ -1206,6 +1210,17 @@ packages:
       - tuples
       - unsafe-coerce
       - web-html
+  heterogeneous:
+    type: registry
+    version: 0.6.0
+    integrity: sha256-cfNYSK6yYmjTrkzk95Otpv6TUUkeBreexwqG/tBvUyg=
+    dependencies:
+      - either
+      - functors
+      - prelude
+      - record
+      - tuples
+      - variant
   identity:
     type: registry
     version: 6.0.0
@@ -1468,6 +1483,16 @@ packages:
       - functions
       - prelude
       - unsafe-coerce
+  record-studio:
+    type: registry
+    version: 1.0.4
+    integrity: sha256-9v6qpUrGa17Im/F/vWODjKlmD3ZuUXYIKCpz5OI9seM=
+    dependencies:
+      - heterogeneous
+      - lists
+      - prelude
+      - record
+      - typelevel-prelude
   refs:
     type: registry
     version: 6.0.0
@@ -1607,6 +1632,19 @@ packages:
     integrity: sha256-zU7BhfJU14nXQRZG9iADsp0mSiKhz07OcKyjRB2YT+Y=
     dependencies:
       - prelude
+  variant:
+    type: registry
+    version: 8.0.0
+    integrity: sha256-SR//zQDg2dnbB8ZHslcxieUkCeNlbMToapvmh9onTtw=
+    dependencies:
+      - enums
+      - lists
+      - maybe
+      - partial
+      - prelude
+      - record
+      - tuples
+      - unsafe-coerce
   web-clipboard:
     type: registry
     version: 6.0.0

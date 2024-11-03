@@ -8,8 +8,9 @@ import DAM4G.Compiler.Backend.CodeLabel (CodeLabel(..))
 import DAM4G.Compiler.Backend.Instruction (Instruction(..))
 import DAM4G.Compiler.Backend.Program (CodeSection(..), Program(..), codeLength, empty)
 import DAM4G.Compiler.Name (Ident(..), ModuleName)
-import DAM4G.Compiler.Optimizer.IR (ELC(..), Primitive(..), Var(..))
+import DAM4G.Compiler.Optimizer.IR (ELC(..), Var(..))
 import DAM4G.Compiler.Optimizer.IR as IR
+import DAM4G.Compiler.Primitive (Primitive(..))
 import Data.Array as Array
 import Data.Identity (Identity(..))
 import Data.List (List, (:))
@@ -200,8 +201,8 @@ compileTerm (Ident ident) =
             go arg k'
       compArgs tmArgs
     ELPrim _ prim args -> case prim of
-      PGetGlobal id -> pure $ KGetGlobal id : k
-      PSetGlobal id
+      PGetGlobal modname id -> pure $ KGetGlobal id : k
+      PSetGlobal modname id
         | [ arg ] <- args -> go arg $ KSetGlobal id : k
         | otherwise -> unsafeCrashWith "Impossible"
       _ -> compArgList args (compPrim prim k)

@@ -4,20 +4,23 @@ import Prelude
 
 import DAM4G.Compiler.Constant (AtomicConstant)
 import DAM4G.Compiler.Name (ConstructorName, GlobalName, Ident, ModuleName, OperatorName, Qualified)
-import DAM4G.Compiler.Syntax.Source (SourceLoc, SourcePhrase)
+import DAM4G.Compiler.Syntax.Source (SourceLoc, SourcePhrase, emptyLoc)
 import DAM4G.Compiler.Types as T
 import Data.Foldable (class Foldable)
 import Data.Generic.Rep (class Generic)
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Newtype (class Newtype)
 import Data.Show.Generic (genericShow)
 import Data.Traversable (class Traversable)
 import Fmt as Fmt
 
+type SourceIdent = SourcePhrase () Ident
+
 data Expr a
   = ExprConst a AtomicConstant
   | ExprVar a Ident
   | ExprGlobal a GlobalName
-  | ExprFunc a Ident Type_ (Expr a)
+  | ExprFunc a SourceIdent (Maybe Type_) (Expr a)
   | ExprApp a (Expr a) (Expr a)
   | ExprIf a (Expr a) (Expr a) (Expr a)
   | ExprMatch a (Array (Expr a)) (MatchMatrix a)
@@ -82,7 +85,16 @@ derive instance Generic Ann _
 instance Show Ann where
   show it = genericShow it
 
-type SourceIdent = SourcePhrase () Ident
+annLoc :: Ann -> Maybe SourceLoc
+annLoc = case _ of
+  AnnExpr loc _ -> Just loc
+  AnnType src
+    | User loc <- src -> Just loc
+    | otherwise -> Nothing
+
+annLoc' :: Ann -> SourceLoc
+annLoc' = annLoc >>> fromMaybe emptyLoc
+
 data Declaration a
   = NonRec { ident :: SourceIdent, expr :: Expr a }
   | Rec (Array { ident :: SourceIdent, expr :: Expr a })
@@ -115,3 +127,15 @@ newtype Module a = Module
 derive instance Newtype (Module a) _
 instance Show a => Show (Module a) where
   show (Module m) = Fmt.fmt @"(Module {m})" { m: show m }
+
+exprAnn :: forall a. Expr a -> a
+exprAnn = case _ of
+  ExprConst a _ -> a
+  ExprVar a _ -> a
+  ExprGlobal a _ -> a
+  ExprFunc a _ _ _ -> a
+  ExprApp a _ _ -> a
+  ExprIf a _ _ _ -> a
+  ExprMatch a _ _ -> a
+  ExprTyped a _ _ -> a
+

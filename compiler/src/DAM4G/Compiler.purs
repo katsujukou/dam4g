@@ -10,8 +10,9 @@ import Prelude
 import DAM4G.Compiler.Backend.CodeGen (emit, mkGdoFile)
 import DAM4G.Compiler.Backend.Lower (lower)
 import DAM4G.Compiler.Name (Ident(..), ModuleName(..))
-import DAM4G.Compiler.Optimizer.IR (ELC(..), Primitive(..), Var(..))
+import DAM4G.Compiler.Optimizer.IR (ELC(..), Var(..))
 import DAM4G.Compiler.Optimizer.IR as IR
+import DAM4G.Compiler.Primitive (Primitive(..))
 import DAM4G.Compiler.Value (Constant(..))
 import Data.ArrayBuffer.ArrayBuffer as AB
 import Data.ArrayBuffer.Types (ArrayBuffer)

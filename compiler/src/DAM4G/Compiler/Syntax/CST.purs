@@ -3,12 +3,13 @@ module DAM4G.Compiler.Syntax.CST where
 import Prelude
 
 import DAM4G.Compiler.Constant (AtomicConstant)
-import DAM4G.Compiler.Name (Ident, ModuleName(..), OperatorName(..))
-import DAM4G.Compiler.Syntax.Source (SourceLoc(..))
+import DAM4G.Compiler.Name (Ident, ModuleName, OperatorName)
+import DAM4G.Compiler.Syntax.Source (SourceLoc)
 import DAM4G.Compiler.Syntax.Source as Source
-import DAM4G.Compiler.Types (Associativity(..))
+import DAM4G.Compiler.Types (Associativity)
 import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Generic.Rep (class Generic)
+import Data.Maybe (Maybe)
 import Data.Newtype (class Newtype)
 import Data.Show.Generic (genericShow)
 import Fmt as Fmt
@@ -78,7 +79,7 @@ instance Show Recursivity where
 
 data Expr a
   = ExprConst a AtomicConstant
-  | ExprIdent a Ident
+  | ExprIdent a (Maybe ModuleName) Ident
   | ExprList a (Array (Expr a))
   | ExprTuple a (Array (Expr a))
   | ExprApp a (Expr a) (NonEmptyArray (Expr a))
@@ -163,7 +164,7 @@ exprAnn = case _ of
   ExprConst a _ -> a
   ExprList a _ -> a
   ExprTuple a _ -> a
-  ExprIdent a _ -> a
+  ExprIdent a _ _ -> a
   ExprFunc a _ _ -> a
   ExprApp a _ _ -> a
   ExprOperator a _ _ -> a

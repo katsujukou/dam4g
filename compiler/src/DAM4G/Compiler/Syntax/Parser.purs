@@ -7,12 +7,12 @@ import Control.Lazy (class Lazy, defer)
 import Control.Monad.Rec.Class (Step(..), tailRec)
 import DAM4G.Compiler.Constant (AtomicConstant(..))
 import DAM4G.Compiler.Name (ConstructorName(..), Ident(..), OperatorName(..), isConstructorName)
-import DAM4G.Compiler.Types (Associativity(..))
 import DAM4G.Compiler.Syntax.CST (Ann, Binder(..), Declaration(..), Expr(..), Keyword(..), Module(..), Pattern(..), PatternMatrix(..), Recursivity(..), SourceToken, Token(..), Type_(..), binderAnn, exprAnn, patternAnn, typeAnn)
 import DAM4G.Compiler.Syntax.Error (ParseError, ParseErrorDesc(..))
 import DAM4G.Compiler.Syntax.Lexer (LexResult(..), runLexer, tokenize)
 import DAM4G.Compiler.Syntax.Source (SourcePos(..), mapPhrase, (..), (@@), (~))
 import DAM4G.Compiler.Syntax.Source as Source
+import DAM4G.Compiler.Types (Associativity(..))
 import Data.Array as Array
 import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Array.NonEmpty as NonEmptyArray
@@ -487,7 +487,7 @@ parseExprAtom = defer \_ ->
 
 parseExprIdent :: Parser (Expr Ann)
 parseExprIdent = defer \_ -> do
-  ident <#> \{ at, it } -> ExprIdent { loc: at } it
+  ident <#> \{ at, it } -> ExprIdent { loc: at } Nothing it
 
 parseExprList :: Parser (Expr Ann)
 parseExprList = defer \_ -> do
