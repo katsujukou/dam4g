@@ -235,6 +235,7 @@ parseKeyword = case _ of
   "matchfn" -> Just KW_matchfn
   "with" -> Just KW_with
   "as" -> Just KW_as
+  "of" -> Just KW_of
   "def" -> Just KW_def
   "type" -> Just KW_type
   "alias" -> Just KW_alias

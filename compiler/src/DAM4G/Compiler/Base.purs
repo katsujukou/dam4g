@@ -4,12 +4,13 @@ import Prelude
 
 import DAM4G.Compiler.Global (OperatorInfo)
 import DAM4G.Compiler.Global as G
-import DAM4G.Compiler.Name (Ident(..), ModuleName(..), OperatorName(..), Qualified(..), GlobalName)
+import DAM4G.Compiler.Name (GlobalName, Ident(..), ModuleName(..), OperatorName(..), Qualified(..), TypeName(..))
 import DAM4G.Compiler.Primitive (Primitive(..))
 import DAM4G.Compiler.Types (Associativity(..))
 import DAM4G.Compiler.Types as T
 import Data.Map as Map
 import Data.Tuple.Nested ((/\))
+import Safe.Coerce (coerce)
 
 base :: ModuleName
 base = ModuleName "Base"
@@ -80,11 +81,11 @@ intGE = baseIdent "intGE"
 intGT :: GlobalName
 intGT = baseIdent "intGT"
 
-int :: GlobalName
-int = baseIdent "Int"
+int :: Qualified TypeName
+int = coerce $ baseIdent "Int"
 
-bool :: GlobalName
-bool = baseIdent "Bool"
+bool :: Qualified TypeName
+bool = coerce $ baseIdent "Bool"
 
 typInt :: T.Type_ Unit
 typInt = T.TGlobal unit int
@@ -97,10 +98,10 @@ mkArrowType t1 t2 = T.TFunc unit t1 t2
 
 infixr 5 mkArrowType as .->
 
-types :: Map.Map GlobalName G.TypeInfo
+types :: Map.Map (Qualified TypeName) G.TypeInfo
 types = Map.fromFoldable
-  [ int /\ { opened: true }
-  , bool /\ { opened: true }
+  [ int /\ { kind: T.KndType unit, opened: true, constrs: [] }
+  , bool /\ { kind: T.KndType unit, opened: true, constrs: [] }
   ]
 
 globals :: Map.Map GlobalName G.GlobalInfo

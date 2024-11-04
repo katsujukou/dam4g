@@ -3,7 +3,7 @@ module DAM4G.Compiler.Syntax.AST where
 import Prelude
 
 import DAM4G.Compiler.Constant (AtomicConstant)
-import DAM4G.Compiler.Name (ConstructorName, GlobalName, Ident, ModuleName, OperatorName, Qualified)
+import DAM4G.Compiler.Name (ConstructorName, GlobalName, Ident, ModuleName, OperatorName, Qualified, TypeName)
 import DAM4G.Compiler.Syntax.Source (SourceLoc, SourcePhrase, emptyLoc)
 import DAM4G.Compiler.Types as T
 import Data.Foldable (class Foldable)
@@ -22,6 +22,7 @@ data Expr a
   | ExprGlobal a GlobalName
   | ExprFunc a SourceIdent (Maybe Type_) (Expr a)
   | ExprApp a (Expr a) (Expr a)
+  | ExprConstructor a (Qualified ConstructorName) (Maybe (Expr a))
   | ExprIf a (Expr a) (Expr a) (Expr a)
   | ExprMatch a (Array (Expr a)) (MatchMatrix a)
   | ExprTyped a (Expr a) Type_
@@ -65,20 +66,9 @@ derive instance Eq a => Eq (MatchMatrix a)
 instance Show a => Show (MatchMatrix a) where
   show (MatchMatrix m) = Fmt.fmt @"(MatchMatrix {m})" { m: show m }
 
-data NameSource
-  = User SourceLoc
-  | Compiler
+type Type_ = T.Type_ T.TypeAnn
 
-derive instance Eq NameSource
-derive instance Generic NameSource _
-instance Show NameSource where
-  show = genericShow
-
-type Type_ = T.Type_ Ann
-
-data Ann
-  = AnnExpr SourceLoc (T.Type_ Ann)
-  | AnnType NameSource
+data Ann = AnnExpr SourceLoc (T.Type_ T.TypeAnn)
 
 derive instance Eq Ann
 derive instance Generic Ann _
@@ -88,9 +78,6 @@ instance Show Ann where
 annLoc :: Ann -> Maybe SourceLoc
 annLoc = case _ of
   AnnExpr loc _ -> Just loc
-  AnnType src
-    | User loc <- src -> Just loc
-    | otherwise -> Nothing
 
 annLoc' :: Ann -> SourceLoc
 annLoc' = annLoc >>> fromMaybe emptyLoc
@@ -117,10 +104,33 @@ derive instance Newtype OperatorInfo _
 instance Show OperatorInfo where
   show (OperatorInfo o) = Fmt.fmt @"(OperatorInfo {o})" { o: show o }
 
+newtype TypeDeclaration = TypeDeclaration
+  { loc :: SourceLoc
+  , typname :: Qualified TypeName
+  , kind :: T.Kind Unit
+  , constrs :: Array TypeDeclarationConstructor
+  }
+
+derive instance Newtype TypeDeclaration _
+derive instance Eq TypeDeclaration
+instance Show TypeDeclaration where
+  show (TypeDeclaration td) = Fmt.fmt @"(TypeDeclaration {td})" { td: show td }
+
+newtype TypeDeclarationConstructor = TypeDeclarationConstructor
+  { name :: Qualified ConstructorName
+  , typ :: T.Type_ Unit
+  }
+
+derive instance Newtype TypeDeclarationConstructor _
+derive instance Eq TypeDeclarationConstructor
+instance Show TypeDeclarationConstructor where
+  show (TypeDeclarationConstructor tdc) = Fmt.fmt @"(TypeDeclarationConstructor {tdc})" { tdc: show tdc }
+
 newtype Module a = Module
   { name :: ModuleName
   , loc :: SourceLoc
   , decls :: Array (Declaration a)
+  , typeDecls :: Array TypeDeclaration
   , operators :: Array OperatorInfo
   }
 
@@ -133,6 +143,7 @@ exprAnn = case _ of
   ExprConst a _ -> a
   ExprVar a _ -> a
   ExprGlobal a _ -> a
+  ExprConstructor a _ _ -> a
   ExprFunc a _ _ _ -> a
   ExprApp a _ _ -> a
   ExprIf a _ _ _ -> a

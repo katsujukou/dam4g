@@ -61,6 +61,7 @@ data Keyword
   | KW_type
   | KW_alias
   | KW_as
+  | KW_of
 
 derive instance eqKeyword :: Eq Keyword
 derive instance ordKeyword :: Ord Keyword
@@ -86,7 +87,6 @@ data Expr a
   | ExprOperator a (Expr a) (NonEmptyArray { op :: SourcePhrase OperatorName, rhs :: Expr a })
   | ExprFunc a (NonEmptyArray (Pattern a)) (Expr a)
   | ExprLet a Recursivity (NonEmptyArray (Binder a)) (Expr a)
-  | ExprConstructor a Ident (Array (Expr a))
   | ExprIf a (Expr a) (Expr a) (Expr a)
   | ExprMatch a (NonEmptyArray (Expr a)) (PatternMatrix a)
   | ExprMatchFn a (NonEmptyArray (Pattern a)) (PatternMatrix a)
@@ -125,7 +125,7 @@ data Pattern a
   | PatVar a Ident
   | PatConst a AtomicConstant
   | PatList a (Array (Pattern a))
-  | PatConstructor a Ident (Array (Pattern a))
+  | PatConstructor a (Maybe ModuleName) Ident (Array (Pattern a))
   | PatAlias a (Pattern a) Ident
   | PatParensed a (Pattern a)
   | PatTyped a (Pattern a) (Type_ a)
@@ -138,7 +138,7 @@ instance Show a => Show (Pattern a) where
 
 data Type_ a
   = TFunc a (NonEmptyArray (Type_ a)) (Type_ a)
-  | TFree a Ident
+  | TIdent a (Maybe ModuleName) Ident
   | TTup a (Array (Type_ a))
   | TParens a (Type_ a)
 
@@ -155,7 +155,7 @@ type Ann =
 typeAnn :: forall a. Type_ a -> a
 typeAnn = case _ of
   TFunc a _ _ -> a
-  TFree a _ -> a
+  TIdent a _ _ -> a
   TTup a _ -> a
   TParens a _ -> a
 
@@ -169,7 +169,6 @@ exprAnn = case _ of
   ExprApp a _ _ -> a
   ExprOperator a _ _ -> a
   ExprLet a _ _ _ -> a
-  ExprConstructor a _ _ -> a
   ExprIf a _ _ _ -> a
   ExprMatch a _ _ -> a
   ExprMatchFn a _ _ -> a
@@ -182,7 +181,7 @@ patternAnn = case _ of
   PatVar a _ -> a
   PatConst a _ -> a
   PatList a _ -> a
-  PatConstructor a _ _ -> a
+  PatConstructor a _ _ _ -> a
   PatAlias a _ _ -> a
   PatParensed a _ -> a
   PatTyped a _ _ -> a
@@ -193,15 +192,29 @@ binderAnn (Binder a _ _) = a
 data Declaration a
   = Decl a (SourcePhrase Ident) (Array (Pattern a)) (Expr a)
   | DeclRec a (Array { name :: SourcePhrase Ident, pats :: Array (Pattern a), exp :: Expr a })
+  | DeclSet a (SourcePhrase Ident) (Array (Constructor a))
   | DeclAlias a (SourcePhrase Ident) (SourcePhrase OperatorName) (SourcePhrase Associativity) (SourcePhrase Int)
-
--- | DeclSet a (SourcePhrase Ident) ()
 
 derive instance Functor Declaration
 derive instance Generic (Declaration a) _
 derive instance Eq a => Eq (Declaration a)
 instance Show a => Show (Declaration a) where
   show = genericShow
+
+data Constructor a
+  = ConstrNull a (SourcePhrase Ident)
+  | ConstrStructured a (SourcePhrase Ident) (Type_ a)
+
+derive instance Functor Constructor
+derive instance Eq a => Eq (Constructor a)
+derive instance Generic (Constructor a) _
+instance Show a => Show (Constructor a) where
+  show it = genericShow it
+
+nameOfConstructor :: forall a. Constructor a -> SourcePhrase Ident
+nameOfConstructor = case _ of
+  ConstrNull _ name -> name
+  ConstrStructured _ name _ -> name
 
 newtype Module a = Module
   { name :: ModuleName
@@ -213,3 +226,8 @@ derive instance Newtype (Module a) _
 derive instance Eq a => Eq (Module a)
 instance Show a => Show (Module a) where
   show (Module m) = Fmt.fmt @"(Module {m})" { m: show m }
+
+constructorAnn :: forall a. Constructor a -> a
+constructorAnn = case _ of
+  ConstrStructured a _ _ -> a
+  ConstrNull a _ -> a

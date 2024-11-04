@@ -7,7 +7,7 @@ import Control.Lazy (class Lazy, defer)
 import Control.Monad.Rec.Class (Step(..), tailRec)
 import DAM4G.Compiler.Constant (AtomicConstant(..))
 import DAM4G.Compiler.Name (ConstructorName(..), Ident(..), OperatorName(..), isConstructorName)
-import DAM4G.Compiler.Syntax.CST (Ann, Binder(..), Declaration(..), Expr(..), Keyword(..), Module(..), Pattern(..), PatternMatrix(..), Recursivity(..), SourceToken, Token(..), Type_(..), binderAnn, exprAnn, patternAnn, typeAnn)
+import DAM4G.Compiler.Syntax.CST (Ann, Binder(..), Constructor(..), Declaration(..), Expr(..), Keyword(..), Module(..), Pattern(..), PatternMatrix(..), Recursivity(..), SourceToken, Token(..), Type_(..), binderAnn, constructorAnn, exprAnn, patternAnn, typeAnn)
 import DAM4G.Compiler.Syntax.Error (ParseError, ParseErrorDesc(..))
 import DAM4G.Compiler.Syntax.Lexer (LexResult(..), runLexer, tokenize)
 import DAM4G.Compiler.Syntax.Source (SourcePos(..), mapPhrase, (..), (@@), (~))
@@ -27,6 +27,7 @@ import Data.String.Regex.Unsafe (unsafeRegex)
 import Data.Tuple (fst, snd)
 import Data.Tuple.Nested (type (/\), (/\))
 import Partial.Unsafe (unsafeCrashWith, unsafePartial)
+import Safe.Coerce (coerce)
 
 type SourcePhrase a = Source.SourcePhrase () a
 
@@ -214,8 +215,16 @@ matchfn = token (TokReserved KW_matchfn)
 with :: Parser SourceToken
 with = token (TokReserved KW_with)
 
+of_ :: Parser SourceToken
+of_ = token (TokReserved KW_of)
+
 def :: Parser SourceToken
 def = token (TokReserved KW_def)
+
+set :: Parser SourceToken
+set = tokenSuchThat case _ of
+  TokIdent (Ident "set") -> true
+  _ -> false
 
 alias :: Parser SourceToken
 alias = token (TokReserved KW_alias)
@@ -343,7 +352,7 @@ parseExpr3 :: Parser (Expr Ann)
 parseExpr3 = defer \_ ->
   do
     exp <- parseExpr4
-    args <- many parseExpr
+    args <- many parseExpr4
     case Array.unsnoc args of
       Nothing -> pure exp
       Just { init, last } -> pure $
@@ -507,12 +516,12 @@ parseConstructorName = defer \_ -> do
     st@{ at, it: tok }
       | TokIdent (Ident name) <- tok ->
           if constrRegex `Re.test` name then
-            pure { at, it: ConstructorName name }
+            pure { at, it: ConstructorName (coerce name) }
           else
             failwith ({ at, toks: [ st ], desc: NotAConstructorName name })
       | otherwise -> unsafeCrashWith "Impossible"
   where
-  constrRegex = unsafeRegex """[A-Z][a-zA-Z0-9'_]*""" unicode
+  constrRegex = unsafeRegex """^[A-Z][a-zA-Z0-9'_]*$""" unicode
 
 parseExprConst :: Parser (Expr Ann)
 parseExprConst = defer \_ -> do
@@ -533,8 +542,8 @@ parsePattern = defer \_ -> do
     ident
   case mbIdent of
     Nothing -> pure pat
-    Just { at: loc2, it: alias } ->
-      pure $ PatAlias { loc: (patternAnn pat).loc .. loc2 } pat alias
+    Just { at: loc2, it: alias' } ->
+      pure $ PatAlias { loc: (patternAnn pat).loc .. loc2 } pat alias'
 
 parsePattern1 :: Parser (Pattern Ann)
 parsePattern1 = defer \_ ->
@@ -560,9 +569,9 @@ parsePatConstructor = defer \_ -> do
   pats <- many parsePatternAtom
   case Array.last pats of
     Nothing
-      | isConstructorName constr -> pure $ PatConstructor { loc: loc1 } constr []
+      | isConstructorName constr -> pure $ PatConstructor { loc: loc1 } Nothing constr []
       | otherwise -> pure $ PatVar { loc: loc1 } constr
-    Just pat -> pure $ PatConstructor { loc: loc1 .. (patternAnn pat).loc } constr pats
+    Just pat -> pure $ PatConstructor { loc: loc1 .. (patternAnn pat).loc } Nothing constr pats
 
 parsePatternAtom :: Parser (Pattern Ann)
 parsePatternAtom = defer \_ ->
@@ -649,7 +658,7 @@ parseTypeAtom = defer \_ ->
 parseTypeFree :: Parser (Type_ Ann)
 parseTypeFree = defer \_ -> do
   name <- ident
-  pure $ TFree { loc: name.at } name.it
+  pure $ TIdent { loc: name.at } Nothing name.it
 
 parseParensType :: Parser (Type_ Ann)
 parseParensType = defer \_ -> do
@@ -664,6 +673,7 @@ parseDeclaration :: Parser (Declaration Ann)
 parseDeclaration = defer \_ -> do
   parseDeclarationDeclRec
     <|> parseDeclarationDecl
+    <|> parseDeclarationSet
     <|> parseDeclarationAlias
 
 parseDeclarationDecl :: Parser (Declaration Ann)
@@ -713,6 +723,22 @@ parsePatterns p = defer \_ -> do
         loc = (patternAnn pat).loc .. (patternAnn last).loc
       in
         pure $ NonEmptyArray.cons' pat pats @@ loc
+
+parseDeclarationSet :: Parser (Declaration Ann)
+parseDeclarationSet = defer \_ -> do
+  ({ at: loc1 }) /\ _ <- def `followedBy` set
+  name <- ident
+  { at: loc2 } <- equal
+  constrs <- many do
+    pipe_ <- pipe
+    constr <- ident
+    optional (of_ `followedBy` parseType) >>=
+      case _ of
+        Nothing -> pure $ ConstrNull { loc: pipe_.at .. constr.at } constr
+        Just (_ /\ typ) -> pure $ ConstrStructured { loc: pipe_.at .. (typeAnn typ).loc } constr typ
+  case Array.last constrs of
+    Nothing -> pure $ DeclSet { loc: loc1 .. loc2 } name constrs
+    Just constr -> pure $ DeclSet { loc: loc1 .. (constructorAnn constr).loc } name constrs
 
 parseDeclarationAlias :: Parser (Declaration Ann)
 parseDeclarationAlias = defer \_ -> do

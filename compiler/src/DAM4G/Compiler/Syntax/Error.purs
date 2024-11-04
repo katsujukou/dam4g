@@ -8,10 +8,11 @@ module DAM4G.Compiler.Syntax.Error
 import Prelude
 
 import DAM4G.Compiler.Global as G
-import DAM4G.Compiler.Name (Ident(..), OperatorName(..), GlobalName)
+import DAM4G.Compiler.Name (ConstructorName, Ident, ModuleName, OperatorName, TypeName)
 import DAM4G.Compiler.Syntax.CST (SourceToken, Token)
-import DAM4G.Compiler.Syntax.Source (SourceLoc(..), SourcePos, SourcePhrase)
+import DAM4G.Compiler.Syntax.Source (SourceLoc, SourcePhrase, SourcePos)
 import Data.Generic.Rep (class Generic)
+import Data.Maybe (Maybe)
 import Data.Show.Generic (genericShow)
 
 data ParseErrorDesc
@@ -37,10 +38,15 @@ type ParseError =
 data SyntaxError
   = UnboundOperator OperatorName
   | UnboundName Ident
-  | NotAConstructor GlobalName
+  | UnboundTypeName TypeName
+  | NotAConstructor (Maybe ModuleName) Ident
+  | UnknownConstructor (Maybe ModuleName) ConstructorName
+  | InvalidTypName SourceLoc Ident
+  | InvalidConstructorName SourceLoc Ident
+  | ModuleDoesNotExportName ModuleName Ident
   | NotSupportedYet String
-  | FunctionArgumentNotAnnotated SourceLoc
   | OperatorsAssociativityConflicts (Array (SourcePhrase () G.OperatorInfo))
+  | ConstructorNameConflicts SourceLoc ConstructorName
 
 derive instance Generic SyntaxError _
 instance Show SyntaxError where

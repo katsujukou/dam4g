@@ -2,19 +2,20 @@ module DAM4G.Compiler.Global where
 
 import Prelude
 
-import DAM4G.Compiler.Name (ConstructorName, GlobalName, Ident, OperatorName(..), Qualified(..), unqualify)
+import DAM4G.Compiler.Name (ConstructorName, GlobalName, Ident, OperatorName, Qualified(..), TypeName, unqualify)
 import DAM4G.Compiler.Primitive (Primitive)
-import DAM4G.Compiler.Types (Associativity, Type_)
+import DAM4G.Compiler.Types (Associativity)
 import DAM4G.Compiler.Types as T
 import Data.Array as Array
 import Data.Bifunctor (rmap)
-import Data.Foldable (foldl)
 import Data.Generic.Rep (class Generic)
 import Data.Map as Map
 import Data.Maybe (Maybe)
 import Data.Show.Generic (genericShow)
 import Data.Tuple (fst, snd)
 import Data.Tuple.Nested (type (/\), (/\))
+
+type Type_ = T.Type_ T.TypeAnn
 
 data GlobalDesc
   = Normal NormalDesc
@@ -28,28 +29,24 @@ instance Show GlobalDesc where
 
 type NormalDesc = {}
 
-type ConstructorArg =
-  { name :: Ident
-  , typ :: Type_ Unit
-  }
-
 type ConstructorDesc =
   { name :: Qualified ConstructorName
-  , typname :: GlobalName
-  , arity :: Int
-  , args :: Array ConstructorArg
+  , typname :: Qualified TypeName
+  , sig :: T.Type_ Unit
   }
 
 type PrimDesc =
   { prim :: Primitive }
 
 type TypeInfo =
-  { opened :: Boolean
+  { kind :: T.Kind Unit
+  , constrs :: Array GlobalName
+  , opened :: Boolean
   }
 
 type GlobalInfo =
   { desc :: GlobalDesc
-  , typ :: Type_ Unit
+  , typ :: T.Type_ Unit
   , opened :: Boolean
   }
 
@@ -61,7 +58,7 @@ type OperatorInfo =
   }
 
 type Env =
-  { types :: Map.Map GlobalName TypeInfo
+  { types :: Map.Map (Qualified TypeName) TypeInfo
   , globals :: Map.Map GlobalName GlobalInfo
   , aliases :: Map.Map (Qualified OperatorName) OperatorInfo
   }
@@ -72,6 +69,14 @@ emptyEnv =
   , globals: Map.empty
   , aliases: Map.empty
   }
+
+insertDecl :: GlobalName -> GlobalInfo -> Env -> Env
+insertDecl gloname info env = env
+  { globals = Map.insert gloname info env.globals }
+
+insertType :: Qualified TypeName -> TypeInfo -> Env -> Env
+insertType typename typeInfo env = env
+  { types = env.types # Map.insert typename typeInfo }
 
 insertOperatorAlias :: Qualified OperatorName -> OperatorInfo -> Env -> Env
 insertOperatorAlias opname op env = env
@@ -92,9 +97,14 @@ lookupOpenedAlias { aliases } opname' =
         (\((Qualified _ opname) /\ { opened }) -> opened && opname == opname')
     <#> snd
 
-listOpenedType :: Env -> Array (Ident /\ (GlobalName /\ TypeInfo))
+listOpenedDecls :: Env -> Array (GlobalName /\ GlobalInfo)
+listOpenedDecls { globals } =
+  globals
+    # Map.filter _.opened
+    # Map.toUnfoldable
+
+listOpenedType :: Env -> Array (Qualified TypeName /\ TypeInfo)
 listOpenedType { types } =
   types
     # Map.filter _.opened
     # Map.toUnfoldable
-    <#> \(gloname@(Qualified _ ident) /\ typ) -> ident /\ gloname /\ typ
