@@ -1,0 +1,57 @@
+name: CI
+
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Nix
+        uses: cachix/install-nix-action@v23
+        with:
+          nix_path: nixpkgs=channel:nixos-24.05
+
+      - name: Enable nix devshell
+        uses: nicknovitski/nix-develop@v1
+
+      - name: Build environment with Nix flake
+        run: nix develop --extra-experimental-features "nix-command flakes"
+
+      - name: Install dependencies
+        run: pnpm i
+
+      - name: Build compiler
+        run: pnpm -F "./compiler" run release
+
+      - name: Build simulator
+        run: pnpm -F "./simulator" run release
+  
+      - uses: actions/upload-artifact@v3
+        with:
+          name: simulator
+          path: simulator/dist
+      - uses: actions/upload-pages-artifact@v1
+        with:
+          path: simulator/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest 
+    timeout-minutes: 5
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/deploy-pages@v1
+        id: deployment

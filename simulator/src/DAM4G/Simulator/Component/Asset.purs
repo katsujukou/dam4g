@@ -17,6 +17,7 @@ foreign import assetUrls
          , stepInto :: AssetURL
          , eject :: AssetURL
          , compile :: AssetURL
+         , github :: AssetURL
          }
      }
 

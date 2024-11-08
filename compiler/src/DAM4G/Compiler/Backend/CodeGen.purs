@@ -11,7 +11,7 @@ import DAM4G.Compiler.Backend.Instruction (Instruction(..))
 import DAM4G.Compiler.Backend.Program (CodeSection(..), Program(..))
 import DAM4G.Compiler.Types (AtomicConstant(..), BlockTag(..))
 import DAM4G.Compiler.Version (compilerVersion)
-import Data.Array (findIndex, fold, foldMap)
+import Data.Array (findIndex, fold, foldMap, length)
 import Data.Array as Array
 import Data.Array.NonEmpty as NonEmptyArray
 import Data.Array.ST as STArray
@@ -278,7 +278,9 @@ opcodeBytes = case _ of
   KBranch _ -> 3
   KBranchIf _ -> 3
   KBranchIfNot _ -> 3
-  KBranchIfNotImm _ _ -> 7
+  KBranchIfNotImm cst _
+    | ACInt _ <- cst -> 7
+    | otherwise -> 4
   KBranchIfNotTag _ _ -> 4
   KBranchIfEqTag _ _ -> 4
   _ -> 1

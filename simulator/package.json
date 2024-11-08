@@ -2,7 +2,12 @@
   "type": "module",
   "scripts": {
     "compile": "cd .. && spago build -p simulator",
-    "dev": "pnpm run compile && vite"
+    "dev": "pnpm run compile && vite",
+    "optimize": "cd .. && purs-backend-es build",
+    "bundle": "cp ./src/index.js ./index.js && vite build",
+    "clean": "cd .. && rm -rf output output-es simulator/dist",
+    "build": "pnpm run compile && pnpm run optimize && pnpm run bundle",
+    "release": "pnpm run clean && pnpm run build"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.20",

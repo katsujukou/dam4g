@@ -3,12 +3,8 @@ module DAM4G.Simulator.Runtime where
 import Prelude
 
 import DAM4G.Simulator.Instruction (Constant(..), Instruction(..), ConstructorTag)
-import Data.Array ((..), (:))
-import Data.Array as A
+import Data.Array ((..))
 import Data.Array as Array
-import Data.Array.ST (STArray)
-import Data.Array.ST as STArray
-import Data.Bifunctor (rmap)
 import Data.Either (Either(..))
 import Data.Generic.Rep (class Generic)
 import Data.List (List, (!!))
@@ -17,12 +13,7 @@ import Data.List as List
 import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..))
-import Data.Show.Generic (class GenericShow, genericShow)
-import Data.Traversable (for, for_)
-import Data.Tuple.Nested ((/\))
-import Effect.Class.Console (error)
-import Halogen.HTML (progress)
-import Partial.Unsafe (unsafeCrashWith)
+import Data.Show.Generic (genericShow)
 
 data Value
   = Imd Int

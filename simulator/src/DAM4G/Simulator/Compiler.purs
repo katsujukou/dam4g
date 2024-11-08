@@ -141,7 +141,7 @@ loadGdoFile buf = do
   loadTextSection sectionOfsTbl bodyView syms = do
     loadCodeBlock 0 bodyView syms sectionOfsTbl.text sectionOfsTbl.entry
 
-  loadCodeBlock ofsBody view syms from to = do
+  loadCodeBlock _ view syms from to = do
     codeList <- Ref.new []
     ofsRef <- Ref.new from
     whileE (Ref.read ofsRef <#> (_ < to)) do
@@ -216,7 +216,7 @@ loadGdoFile buf = do
       let
         instr = KBranchIfNotImm
           (if b /= 0 then (CstBool true) else (CstBool false))
-          (Right $ ofs + n - 1)
+          (Right $ ofs + n - 2)
       pure $ instr /\ [ 0xB3, b, n `mod` 256, n / 256 ] /\ ofs''
 
     0xB5 -> do

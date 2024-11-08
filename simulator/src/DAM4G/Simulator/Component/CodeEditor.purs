@@ -5,10 +5,13 @@ import Prelude
 import DAM4G.Simulator.Component.Asset (assetUrls, toString)
 import DAM4G.Simulator.Foreign (unsafeInnerHtml)
 import DAM4G.Simulator.Hooks.UseStore (useApp)
+import Data.Array ((..))
+import Data.Array as Array
 import Data.Maybe (Maybe(..))
 import Data.String.Regex as Re
 import Data.String.Regex.Flags (global, unicode)
 import Data.String.Regex.Unsafe (unsafeRegex)
+import Data.String.Utils (lines)
 import Data.Tuple.Nested ((/\))
 import Effect.Aff.Class (class MonadAff)
 import Halogen (ClassName(..), liftEffect)
@@ -109,6 +112,7 @@ make = Hooks.component \{ outputToken } _ -> Hooks.do
       , handleTextInput
       , handleTextareaScroll
       , console: appApi.console
+      , lines: Array.length $ lines src
       }
   Hooks.pure $ render ctx
   where
@@ -131,8 +135,10 @@ make = Hooks.component \{ outputToken } _ -> Hooks.do
               ]
           ]
       , HH.div [ HP.class_ $ ClassName "flex relative" ]
-          [ HH.div [ HP.class_ $ ClassName "bg-gray-300 w-[48px]" ]
-              []
+          [ HH.div [ HP.class_ $ ClassName "bg-gray-300 w-[48px]" ] $
+              (1 .. ctx.lines) <#> \i -> do
+                HH.div [ HP.class_ $ ClassName "text-right mr-1 text-gray-500" ]
+                  [ HH.text $ show i ]
           , HH.pre
               [ HP.class_ $ ClassName "w-[calc(100%-48px)] h-[480px] overflow-auto font-HackGenNF code-editor-view pl-2 overflow-auto border border-gray-100"
               , HP.ref _codeEditorView
