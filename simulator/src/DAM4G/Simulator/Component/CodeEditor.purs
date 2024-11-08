@@ -147,8 +147,8 @@ make = Hooks.component \{ outputToken } _ -> Hooks.do
               , HP.ref _codeEditorTextarea
               ]
           ]
-      , HH.div [ HP.class_ $ ClassName "my-3 flex-auto basis-0 bg-gray-700 text-gray-50  font-HackGenNF" ]
+      , HH.div [ HP.class_ $ ClassName "my-3 flex-auto basis-0 overflow-scroll bg-gray-700 text-gray-50  font-HackGenNF" ]
           $ ctx.console <#> \msg -> do
               HH.pre_
-                [ HH.text msg ]
+                [ HH.text $ "DAM4G> " <> msg <> "\n" ]
       ]
