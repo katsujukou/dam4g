@@ -18,7 +18,6 @@ import Data.Show.Generic (genericShow)
 data ParseErrorDesc
   = LexUnexpected String
   | UnexpectedToken Token
-  | NotAConstructorName String
 
 derive instance genericParseErrorDesc :: Generic ParseErrorDesc _
 instance showParseErrorDesc :: Show ParseErrorDesc where

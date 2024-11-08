@@ -20,14 +20,12 @@ import Data.Map as Map
 import Data.Maybe (Maybe(..))
 import Data.Nullable (Nullable, toMaybe)
 import Data.String.CodeUnits (fromCharArray)
-import Data.Traversable (for, for_)
+import Data.Traversable (for)
 import Data.Tuple.Nested (type (/\), (/\))
 import Data.UInt (toInt)
 import Effect (Effect, whileE)
 import Effect.Aff (Aff, catchError)
-import Effect.Aff as Exn
-import Effect.Class.Console as Console
-import Effect.Exception (catchException, throw)
+import Effect.Exception (throw)
 import Effect.Ref as Ref
 import Partial.Unsafe (unsafeCrashWith)
 
@@ -129,7 +127,6 @@ loadGdoFile buf = do
   where
 
   loadNamespaces view from symsCnt = do
-    Console.logShow from
     textOfs <- Ref.new from
     namespacesRef <- Ref.new []
     whileE (Ref.read namespacesRef <#> Array.length >>> (_ < symsCnt)) do
@@ -205,10 +202,36 @@ loadGdoFile buf = do
       pure $ (KBranch $ ofs + n - 1) /\ [ 0xB0, n `mod` 256, n / 256 ] /\ ofs'
     0xB1 -> do
       n /\ ofs' <- readInt16 view ofs
-      pure $ (KBranchIf $ ofs + n - 1) /\ [ 0xB0, n `mod` 256, n / 256 ] /\ ofs'
+      pure $ (KBranchIf $ ofs + n - 1) /\ [ 0xB1, n `mod` 256, n / 256 ] /\ ofs'
     0xB2 -> do
       n /\ ofs' <- readInt16 view ofs
-      pure $ (KBranchIfNot $ ofs + n - 1) /\ [ 0xB0, n `mod` 256, n / 256 ] /\ ofs'
+      pure $ (KBranchIfNot $ ofs + n - 1) /\ [ 0xB2, n `mod` 256, n / 256 ] /\ ofs'
+    0xB4 -> do
+      n1 /\ ofs' <- readWord view ofs
+      n2 /\ ofs'' <- readInt16 view ofs'
+      pure $ (KBranchIfNotImm (CstInt n1) $ Right (ofs + n2 - 1)) /\ fold [ [ 0xB3 ], fourBytes n1, [ n2 `mod` 256, n2 / 256 ] ] /\ ofs''
+    0xB3 -> do
+      b /\ ofs' <- readByte view ofs
+      n /\ ofs'' <- readInt16 view ofs'
+      let
+        instr = KBranchIfNotImm
+          (if b /= 0 then (CstBool true) else (CstBool false))
+          (Right $ ofs + n - 1)
+      pure $ instr /\ [ 0xB3, b, n `mod` 256, n / 256 ] /\ ofs''
+
+    0xB5 -> do
+      tag /\ ofs' <- readByte view ofs
+      n /\ ofs'' <- readInt16 view ofs'
+      let
+        instr = KBranchIfNotTag tag (Right $ ofs + n - 1)
+      pure $ instr /\ [ 0xB3, tag, n `mod` 256, n / 256 ] /\ ofs''
+
+    0xB6 -> do
+      tag /\ ofs' <- readByte view ofs
+      n /\ ofs'' <- readInt16 view ofs'
+      let
+        instr = KBranchIfEqTag tag (Right $ ofs + n - 1)
+      pure $ instr /\ [ 0xB3, tag, n `mod` 256, n / 256 ] /\ ofs''
 
     0xC0 -> do
       n /\ ofs' <- readByte view ofs
@@ -229,7 +252,12 @@ loadGdoFile buf = do
     0xCA -> do
       n /\ ofs' <- readByte view ofs
       pure $ (KField n) /\ [ 0xCA, n ] /\ ofs'
+    0xCB -> do
+      tag /\ ofs' <- readByte view ofs
+      n /\ ofs'' <- readByte view ofs'
+      pure $ (KMakeBlock tag n) /\ [ 0xCB, tag, n ] /\ ofs''
 
+    0xEE -> pure $ KExit /\ [ 0xEE ] /\ ofs
     0xFE -> pure $ KNoop /\ [ 0xFE ] /\ ofs
     0xFF -> pure $ KStop /\ [ 0xFF ] /\ ofs
     b -> pure $ KUndefined b /\ [ b ] /\ ofs

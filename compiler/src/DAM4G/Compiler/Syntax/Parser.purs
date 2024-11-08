@@ -5,14 +5,13 @@ import Prelude
 import Control.Alt (class Alt, (<|>))
 import Control.Lazy (class Lazy, defer)
 import Control.Monad.Rec.Class (Step(..), tailRec)
-import DAM4G.Compiler.Constant (AtomicConstant(..))
-import DAM4G.Compiler.Name (ConstructorName(..), Ident(..), OperatorName(..), isConstructorName)
+import DAM4G.Compiler.Name (Ident(..), OperatorName(..), isConstructorName)
 import DAM4G.Compiler.Syntax.CST (Ann, Binder(..), Constructor(..), Declaration(..), Expr(..), Keyword(..), Module(..), Pattern(..), PatternMatrix(..), Recursivity(..), SourceToken, Token(..), Type_(..), binderAnn, constructorAnn, exprAnn, patternAnn, typeAnn)
 import DAM4G.Compiler.Syntax.Error (ParseError, ParseErrorDesc(..))
 import DAM4G.Compiler.Syntax.Lexer (LexResult(..), runLexer, tokenize)
 import DAM4G.Compiler.Syntax.Source (SourcePos(..), mapPhrase, (..), (@@), (~))
 import DAM4G.Compiler.Syntax.Source as Source
-import DAM4G.Compiler.Types (Associativity(..))
+import DAM4G.Compiler.Types (Associativity(..), AtomicConstant(..))
 import Data.Array as Array
 import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Array.NonEmpty as NonEmptyArray
@@ -21,13 +20,9 @@ import Data.Bifunctor (lmap)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..), maybe)
 import Data.Newtype (wrap)
-import Data.String.Regex as Re
-import Data.String.Regex.Flags (unicode)
-import Data.String.Regex.Unsafe (unsafeRegex)
 import Data.Tuple (fst, snd)
 import Data.Tuple.Nested (type (/\), (/\))
 import Partial.Unsafe (unsafeCrashWith, unsafePartial)
-import Safe.Coerce (coerce)
 
 type SourcePhrase a = Source.SourcePhrase () a
 
@@ -41,7 +36,6 @@ type ParseResult a = Either ParseError a
 recoverable :: ParseError -> Boolean
 recoverable = _.desc >>> case _ of
   UnexpectedToken _ -> true
-  NotAConstructorName _ -> true
   _ -> false
 
 recover :: ParserState -> ParseError -> Either ParseError ParserState
@@ -322,11 +316,11 @@ parseExpr = defer \_ ->
       Just typ ->
         pure $ ExprTyped { loc: (exprAnn exp).loc .. (typeAnn typ).loc } exp typ
 
-parseExpr1 :: Parser (Expr Ann)
-parseExpr1 = defer \_ -> do
-  exp <- parseExpr2
+parseExpr2 :: Parser (Expr Ann)
+parseExpr2 = defer \_ -> do
+  exp <- parseExpr3
   opExps <- many do
-    op /\ rhs <- operator `followedBy` parseExpr2
+    op /\ rhs <- operator `followedBy` parseExpr
     pure { op, rhs }
   case Array.unsnoc opExps of
     Nothing -> pure exp
@@ -335,11 +329,11 @@ parseExpr1 = defer \_ -> do
       exp
       (NonEmptyArray.snoc' init last)
 
-parseExpr2 :: Parser (Expr Ann)
-parseExpr2 = defer \_ -> do
-  hd <- parseExpr3
+parseExpr1 :: Parser (Expr Ann)
+parseExpr1 = defer \_ -> do
+  hd <- parseExpr2
   tl <- many do
-    _ /\ exp <- comma `followedBy` parseExpr3
+    _ /\ exp <- comma `followedBy` parseExpr2
     pure exp
   case Array.last tl of
     Nothing -> pure hd
@@ -439,8 +433,10 @@ parseMatchMatrix = defer \_ -> do
       }
   matchMatrixPatterns = defer \_ -> do
     pat <- parsePattern
-    pats <- many (snd <$> comma `followedBy` parsePattern)
-    pure $ Array.cons pat pats
+    -- pats <- many (snd <$> comma `followedBy` parsePattern)
+    case pat {- Array.cons pat pats -} of
+      PatTuple _ pats' -> pure pats'
+      _ -> pure [ pat ]
 
 parseExprMatchFn :: Parser (Expr Ann)
 parseExprMatchFn = defer \_ -> do
@@ -510,19 +506,6 @@ parseExprList = defer \_ -> do
   { at: loc2 } <- rightSquare
   pure $ ExprList { loc: loc1 .. loc2 } exps
 
-parseConstructorName :: Parser (SourcePhrase ConstructorName)
-parseConstructorName = defer \_ -> do
-  ident_ >>= case _ of
-    st@{ at, it: tok }
-      | TokIdent (Ident name) <- tok ->
-          if constrRegex `Re.test` name then
-            pure { at, it: ConstructorName (coerce name) }
-          else
-            failwith ({ at, toks: [ st ], desc: NotAConstructorName name })
-      | otherwise -> unsafeCrashWith "Impossible"
-  where
-  constrRegex = unsafeRegex """^[A-Z][a-zA-Z0-9'_]*$""" unicode
-
 parseExprConst :: Parser (Expr Ann)
 parseExprConst = defer \_ -> do
   parseAtomicConstant <#> \{ at, it } -> ExprConst { loc: at } it
@@ -549,9 +532,7 @@ parsePattern1 :: Parser (Pattern Ann)
 parsePattern1 = defer \_ ->
   do
     pat <- parsePattern2
-    mbTyp <- optional do
-      _ <- colon
-      parseType
+    mbTyp <- optional $ snd <$> colon `followedBy` parseType
     case mbTyp of
       Nothing -> pure pat
       Just typ -> pure $
@@ -560,18 +541,11 @@ parsePattern1 = defer \_ ->
 parsePattern2 :: Parser (Pattern Ann)
 parsePattern2 = defer \_ ->
   do
-    parsePatConstructor
-    <|> parsePatternAtom
-
-parsePatConstructor :: Parser (Pattern Ann)
-parsePatConstructor = defer \_ -> do
-  { at: loc1, it: constr } <- ident
-  pats <- many parsePatternAtom
-  case Array.last pats of
-    Nothing
-      | isConstructorName constr -> pure $ PatConstructor { loc: loc1 } Nothing constr []
-      | otherwise -> pure $ PatVar { loc: loc1 } constr
-    Just pat -> pure $ PatConstructor { loc: loc1 .. (patternAnn pat).loc } Nothing constr pats
+    pat <- parsePatternAtom
+    pats <- many (snd <$> comma `followedBy` parsePatternAtom)
+    case Array.last pats of
+      Nothing -> pure pat
+      Just lst -> pure $ PatTuple { loc: (patternAnn pat).loc .. (patternAnn lst).loc } (Array.cons pat pats)
 
 parsePatternAtom :: Parser (Pattern Ann)
 parsePatternAtom = defer \_ ->
@@ -594,7 +568,16 @@ parsePatWildcard = defer \_ -> do
 
 parsePatVar :: Parser (Pattern Ann)
 parsePatVar = defer \_ -> do
-  ident <#> \{ at: loc, it } -> PatVar { loc } it
+  { it: ident', at: loc1 } <- ident
+  mbArg <- optional parsePatternAtom
+  if isConstructorName ident' then do
+    let
+      a = case mbArg of
+        Nothing -> { loc: loc1 }
+        Just p -> { loc: loc1 .. (patternAnn p).loc }
+    pure $ PatConstructor a Nothing ident' mbArg
+  else do
+    pure $ PatVar { loc: loc1 } ident'
 
 parsePatConst :: Parser (Pattern Ann)
 parsePatConst = defer \_ -> do
@@ -729,16 +712,19 @@ parseDeclarationSet = defer \_ -> do
   ({ at: loc1 }) /\ _ <- def `followedBy` set
   name <- ident
   { at: loc2 } <- equal
-  constrs <- many do
-    pipe_ <- pipe
-    constr <- ident
-    optional (of_ `followedBy` parseType) >>=
-      case _ of
-        Nothing -> pure $ ConstrNull { loc: pipe_.at .. constr.at } constr
-        Just (_ /\ typ) -> pure $ ConstrStructured { loc: pipe_.at .. (typeAnn typ).loc } constr typ
+  mbConstr <- optional parseDeclSetConstr
+  constrs' <- many (snd <$> pipe `followedBy` parseDeclSetConstr)
+  let constrs = mbConstr # maybe constrs' (flip Array.cons constrs')
   case Array.last constrs of
     Nothing -> pure $ DeclSet { loc: loc1 .. loc2 } name constrs
     Just constr -> pure $ DeclSet { loc: loc1 .. (constructorAnn constr).loc } name constrs
+  where
+  parseDeclSetConstr = defer \_ -> do
+    constr <- ident
+    optional (of_ `followedBy` parseType) >>=
+      case _ of
+        Nothing -> pure $ ConstrNull { loc: constr.at } constr
+        Just (_ /\ typ) -> pure $ ConstrStructured { loc: constr.at .. (typeAnn typ).loc } constr typ
 
 parseDeclarationAlias :: Parser (Declaration Ann)
 parseDeclarationAlias = defer \_ -> do

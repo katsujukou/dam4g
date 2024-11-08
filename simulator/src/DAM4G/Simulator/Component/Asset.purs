@@ -1,7 +1,5 @@
 module DAM4G.Simulator.Component.Asset where
 
-import Prelude
-
 import Unsafe.Coerce (unsafeCoerce)
 
 foreign import data AssetURL :: Type
@@ -12,9 +10,13 @@ foreign import assetUrls
          , memory :: AssetURL
          , table :: AssetURL
          , inspector :: AssetURL
+         , stack :: AssetURL
          , run :: AssetURL
-         , runAll :: AssetURL
+         , runAndPause :: AssetURL
+         , reload :: AssetURL
          , stepInto :: AssetURL
+         , eject :: AssetURL
+         , compile :: AssetURL
          }
      }
 

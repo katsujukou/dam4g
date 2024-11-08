@@ -2,10 +2,12 @@ module DAM4G.Simulator.Runtime where
 
 import Prelude
 
-import DAM4G.Simulator.Instruction (Constant(..), Instruction(..))
+import DAM4G.Simulator.Instruction (Constant(..), Instruction(..), ConstructorTag)
 import Data.Array ((..), (:))
 import Data.Array as A
 import Data.Array as Array
+import Data.Array.ST (STArray)
+import Data.Array.ST as STArray
 import Data.Bifunctor (rmap)
 import Data.Either (Either(..))
 import Data.Generic.Rep (class Generic)
@@ -16,8 +18,9 @@ import Data.Map (Map)
 import Data.Map as Map
 import Data.Maybe (Maybe(..))
 import Data.Show.Generic (class GenericShow, genericShow)
-import Data.Traversable (for)
+import Data.Traversable (for, for_)
 import Data.Tuple.Nested ((/\))
+import Effect.Class.Console (error)
 import Halogen.HTML (progress)
 import Partial.Unsafe (unsafeCrashWith)
 
@@ -54,13 +57,18 @@ instance Show Obj where
   show = genericShow
 
 data ObjTag
-  = TCons
-  | TClos
+  = TClos
+  | TBlk Int
 
 derive instance Eq ObjTag
 derive instance Generic ObjTag _
 instance Show ObjTag where
   show = genericShow
+
+valueOfTag :: ObjTag -> Int
+valueOfTag = case _ of
+  TClos -> 99
+  TBlk t -> t
 
 data ObjElement
   = Tag ObjTag Int
@@ -116,6 +124,7 @@ data RuntimeError
   | NotAPointer
   | NotAConsCell
   | NotANumericValue
+  | NotABlockTag
   | NotABlockComponent
   | IllegalPointerAccess
   | BrokenBlockValue
@@ -137,6 +146,7 @@ describe = case _ of
   StackOutOfRange -> "Stack Out of Range."
   NotAPointer -> "Not a pointer."
   NotAConsCell -> "Not a cons cell"
+  NotABlockTag -> "Not a block tag"
   BrokenBlockValue -> "Broken block value"
   TypeError ty -> "TypeError: Expecting " <> ty
   NotANumericValue -> "Not a numeric value."
@@ -170,10 +180,11 @@ type Machine m =
   , error :: RuntimeError -> m RuntimeState
   }
 
+type RuntimeM :: (Type -> Type) -> Type -> Type
 type RuntimeM m a = m (Either RuntimeError a)
 
-step :: forall m. Monad m => Machine m -> Runtime -> Instruction -> m RuntimeState
-step m rt = case _ of
+step :: forall m. Monad m => Machine m -> Instruction -> m RuntimeState
+step m = case _ of
   KNoop -> m.progress
   KStop -> m.stop
 
@@ -190,7 +201,31 @@ step m rt = case _ of
     v <- m.readAccum
     m.updateGlobal sym v *> m.progress
 
-  -- KField _ -> unsafeCrashWith "Not Implemented"
+  KField n -> do
+    m.readAccum >>= case _ of
+      Ptr ptr -> do
+        m.dereference ptr >>= case _ of
+          Left err -> m.error err
+          Right c
+            | Tag (TBlk _) sz <- c ->
+                if n >= sz then m.error IllegalPointerAccess
+                else do
+                  m.dereference (ptr + 1 + n) >>= case _ of
+                    Left err -> m.error err
+                    Right el
+                      | Component v <- el -> m.loadAccum v *> m.progress
+                      | otherwise -> m.error NotABlockComponent
+
+            | otherwise -> m.error NotABlockComponent
+      _ -> m.error $ NotAPointer
+
+  KMakeBlock tag sz -> do
+    m.alloc (sz + 1) >>= case _ of
+      Left err -> m.error err
+      Right ptr -> do
+        buildBlock ptr tag sz >>= case _ of
+          Left err -> m.error err
+          Right ptr' -> m.loadAccum (Ptr ptr') *> m.progress
 
   KClosure (Right fptr) -> do
     env <- m.getEnv
@@ -312,8 +347,50 @@ step m rt = case _ of
   --     Imd 0 -> m.jumpTo ofs
   --     Imd _ -> m.progress
   --     _ -> m.error NotANumericValue
+  KBranchIfNotImm cst (Right ofs) -> do
+    a <- m.readAccum
+    case a, cst of
+      Imd n1, CstInt n2 ->
+        if n1 == n2 then m.progress
+        else m.jumpTo ofs
+      Imd n1, CstBool b ->
+        if not b && n1 == 0 then m.progress
+        else m.jumpTo ofs
+      _, _ -> m.error NotANumericValue
+
+  KBranchIfNotTag tag (Right ofs) -> do
+    mc <- dereferenceAccumTag
+    case mc of
+      Left err -> m.error err
+      Right { tag: t } ->
+        if t == tag then m.progress
+        else m.jumpTo ofs
+
+  KBranchIfEqTag tag (Right ofs) -> do
+    mc <- dereferenceAccumTag
+    case mc of
+      Left err -> m.error err
+      Right { tag: t } ->
+        if t /= tag then m.progress
+        else m.jumpTo ofs
+
+  KExit -> m.error EvalStuck
+
   _ -> m.error EvalStuck
   where
+  buildBlock :: Addr -> ConstructorTag -> Int -> RuntimeM m _
+  buildBlock ptr tag sz = do
+    let
+      popArgs args 0 = pure $ Right $ Tag (TBlk tag) sz `Array.cons` args
+      popArgs args n = do
+        (if n == 1 then Right <$> m.readAccum else m.popArg) >>= case _ of
+          Left err -> pure $ Left err
+          Right v -> popArgs (Array.cons (Component v) args) (n - 1)
+    popArgs [] sz >>= case _ of
+      Left err -> pure $ Left err
+      Right blk -> do
+        writeHeap ptr blk
+
   buildClosure :: Addr -> List Value -> RuntimeM m _
   buildClosure fptr env = do
     let
@@ -323,7 +400,7 @@ step m rt = case _ of
         , Component <$> Array.fromFoldable env
         ]
 
-    m.alloc sz >>= case _ of
+    m.alloc (2 + sz) >>= case _ of
       Left err -> pure $ Left err
       Right ptr -> writeHeap ptr closure
 
@@ -339,7 +416,7 @@ step m rt = case _ of
                 | Component (Ptr fptr) <- elem2 -> do
                     if sz == 0 then pure $ Right { fptr, env: L.Nil }
                     else do
-                      readHeapBlock (ptr + 2) sz >>= case _ of
+                      readHeapBlock (ptr + 1) sz >>= case _ of
                         Left err -> pure $ Left err
                         Right env -> pure $ Right { fptr, env: L.fromFoldable env }
                 | otherwise -> pure $ Left BrokenBlockValue
@@ -365,6 +442,15 @@ step m rt = case _ of
             | otherwise -> pure $ Left NotABlockComponent
     go n []
 
+  dereferenceAccumTag = do
+    m.readAccum >>= case _ of
+      Ptr p -> do
+        m.dereference p >>= case _ of
+          Left err -> pure $ Left err
+          Right mc
+            | Tag tag sz <- mc -> pure $ Right { tag: valueOfTag tag, sz }
+            | otherwise -> pure $ Left $ NotABlockTag
+      _ -> pure $ Left $ NotAPointer
   -- accessEnv :: Int -> _ (Either RuntimeError Value)
   -- accessEnv n = unsafeCrashWith "Not implemented"
 

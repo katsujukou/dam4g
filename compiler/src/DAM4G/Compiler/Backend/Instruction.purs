@@ -2,21 +2,23 @@ module DAM4G.Compiler.Backend.Instruction where
 
 import Prelude
 
-import DAM4G.Compiler.Backend.CodeLabel (CodeLabel)
+import DAM4G.Compiler.Backend.CodeLabel (CodeLabel(..))
 import DAM4G.Compiler.Name (Ident)
-import DAM4G.Compiler.Value (Constant)
+import DAM4G.Compiler.Types (AtomicConstant, BlockTag, ConstructorTag)
 import Data.Generic.Rep (class Generic)
 import Data.Show.Generic (genericShow)
 
 data Instruction
   = KStop
+  | KExit
   | KNoop
   | KLabel CodeLabel
   -- Constant and literals 
-  | KQuote Constant
+  | KQuote AtomicConstant
   | KGetGlobal Ident
   | KSetGlobal Ident
   | KField Int
+  | KMakeBlock BlockTag Int
   -- Function handling
   | KClosure CodeLabel
   | KApply
@@ -50,6 +52,9 @@ data Instruction
   | KBranch CodeLabel
   | KBranchIf CodeLabel
   | KBranchIfNot CodeLabel
+  | KBranchIfNotImm AtomicConstant CodeLabel
+  | KBranchIfNotTag ConstructorTag CodeLabel
+  | KBranchIfEqTag ConstructorTag CodeLabel
 
 derive instance Generic Instruction _
 instance Show Instruction where

@@ -2,11 +2,10 @@ module DAM4G.Simulator.Hooks.UseStore where
 
 import Prelude
 
-import Control.Monad.Rec.Class (forever)
 import DAM4G.Simulator.Compiler (Compiler, GdoFile, emptyGdoFile, loadCompiler, loadGdoFile)
 import DAM4G.Simulator.Compiler as Compiler
 import DAM4G.Simulator.Instruction (Instruction(..))
-import DAM4G.Simulator.Runtime (Addr, Runtime, RuntimeError(..), RuntimeState(..), Value)
+import DAM4G.Simulator.Runtime (Addr, Runtime, RuntimeError(..), RuntimeState(..), Value, describe)
 import DAM4G.Simulator.Runtime as Runtime
 import Data.Array ((!!))
 import Data.Array as Array
@@ -19,17 +18,16 @@ import Data.Maybe (Maybe(..), isNothing)
 import Data.Show.Generic (genericShow)
 import Data.Tuple (fst)
 import Data.Tuple.Nested (type (/\), (/\))
-import Effect.Aff (Milliseconds(..))
-import Effect.Aff as Aff
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
+import Effect.Class.Console (logShow)
 import Effect.Class.Console as Console
 import Effect.Exception (throw)
 import Effect.Ref as Ref
 import Halogen.Helix (UseHelix, UseHelixHook, makeStore')
 import Halogen.Hooks (class HookNewtype, type (<>), HookType, UseEffect, UseRef, UseState, useLifecycleEffect, useRef, useState)
 import Halogen.Hooks as Hooks
-import Halogen.Query.HalogenM (ForkId(..))
+import Halogen.Query.HalogenM (ForkId)
 import Partial.Unsafe (unsafeCrashWith)
 
 data AppState
@@ -61,6 +59,7 @@ type State =
       }
   , runtime :: Runtime
   , breakpoints :: Map.Map Int Boolean
+  , console :: Array String
   }
 
 data Action
@@ -70,6 +69,7 @@ data Action
   | SetProgram Int (Array (Int /\ Instruction /\ Array Int))
   | SetCompileError String
   | ResetCompile
+  | ResetRuntime
   | SetProgramCounter Int
   | SetGlobals (Map.Map String Value)
   | SetHeap Runtime.Heap
@@ -81,6 +81,7 @@ data Action
   | SetRuntimeState RuntimeState
   | PushArg Runtime.Value
   | SetBreakPoint Int Boolean
+  | AppendConsole String
 
 newtype ExecutionId = ExecutionId ForkId
 
@@ -94,6 +95,7 @@ useStore = makeStore' "store" reducer initialState
     , program: { entrypoint: 0, code: [] }
     , runtime: Runtime.initialState
     , breakpoints: Map.empty
+    , console: []
     }
   reducer st = case _ of
     SetLoading -> st { appstate = Loading }
@@ -104,7 +106,12 @@ useStore = makeStore' "store" reducer initialState
       }
     SetCompileError error -> st { compileError = Just error }
     SetGasm gdofile -> st { gasm = gdofile }
-    ResetCompile -> st { compileError = Nothing, gasm = emptyGdoFile }
+    ResetCompile -> st
+      { compileError = Nothing
+      , gasm = emptyGdoFile
+      , program = { entrypoint: 0, code: [] }
+      , breakpoints = Map.empty
+      }
     SetRuntimeState state -> st
       { runtime = st.runtime { state = state }
       }
@@ -114,6 +121,8 @@ useStore = makeStore' "store" reducer initialState
     LoadAccum val -> do
       let cpu' = st.runtime.cpu { acc = val }
       st { runtime = st.runtime { cpu = cpu' } }
+    ResetRuntime -> do
+      st { runtime = Runtime.initialState }
     SetArgStack arg -> do
       let cpu' = st.runtime.cpu { arg = arg }
       st { runtime = st.runtime { cpu = cpu' } }
@@ -134,6 +143,8 @@ useStore = makeStore' "store" reducer initialState
       st { runtime = st.runtime { cpu = cpu' } }
     SetBreakPoint addr enabled -> do
       st { breakpoints = Map.insert addr enabled st.breakpoints }
+    AppendConsole msg -> do
+      st { console = st.console `Array.snoc` msg }
 
 type AppInterface m =
   { gasm :: GdoFile
@@ -152,11 +163,15 @@ type AppInterface m =
   , popArg :: Hooks.HookM m (Either String Value)
   , readAccum :: Hooks.HookM m Value
   , runProgram :: Hooks.HookM m Unit
+  , togglePause :: Hooks.HookM m Unit
   , stepProgram :: Hooks.HookM m Unit
+  , resetRuntime :: Hooks.HookM m Unit
+  , resetCompile :: Hooks.HookM m Unit
   , breakpoints :: Map.Map Int Boolean
   , listBreakpoints :: Hooks.HookM m (Map.Map Int Boolean)
   , addBreakpoint :: Int -> Hooks.HookM m Unit
   , toggleBreakpoint :: Int -> Hooks.HookM m Boolean
+  , console :: Array String
   }
 
 foreign import data UseApp :: HookType
@@ -195,7 +210,9 @@ useApp = Hooks.wrap hook
           Nothing -> liftEffect $ throw "Compiler is not loaded"
           Just compiler -> do
             liftEffect (Compiler.compile compiler src) >>= case _ of
-              Left err -> ctx.dispatch $ SetCompileError err
+              Left err -> do
+                ctx.dispatch $ SetCompileError err
+                ctx.dispatch $ AppendConsole err
               Right { emitBin } -> do
                 gasm <- liftEffect (emitBin >>= loadGdoFile)
                 ctx.dispatch $ SetGasm gasm
@@ -207,7 +224,7 @@ useApp = Hooks.wrap hook
           Just (_ /\ instr /\ _) -> pure instr
           Nothing -> unsafeCrashWith "Oops"
 
-      step :: Runtime.Runtime -> Instruction -> Hooks.HookM m Runtime.RuntimeState
+      step :: Instruction -> Hooks.HookM m Runtime.RuntimeState
       step = do
         let
           machine :: Runtime.Machine (Hooks.HookM m)
@@ -219,11 +236,10 @@ useApp = Hooks.wrap hook
                   ctx.dispatch $ SetProgramCounter (runtime.cpu.pgc + 1)
                   pure Runtime.Running
                 else do
-                  Console.logShow runtime
                   unsafeCrashWith "Eval stuck"
 
               error err = do
-                Console.log ("Oops!" <> Runtime.describe err)
+                Console.log (describe err)
                 pure Runtime.Glitch
 
               stop = do
@@ -267,7 +283,6 @@ useApp = Hooks.wrap hook
                 case runtime.heap !! addr of
                   Just (Just obj) -> pure $ Right obj
                   Just Nothing -> do
-                    Console.logShow runtime.heap
                     pure $ Left Runtime.AccessToUninitializedMemory
                   Nothing -> pure $ Left $ Runtime.OutOfMemory
 
@@ -314,8 +329,7 @@ useApp = Hooks.wrap hook
                     pure $ Right unit
 
               jumpTo targetOfs = do
-                Console.log $ "targetOfs:" <> show targetOfs
-                { program: { code }, runtime } <- ctx.getState
+                { program: { code } } <- ctx.getState
                 case Array.findIndex (fst >>> (_ == targetOfs)) code of
                   Nothing -> unsafeCrashWith "Oooooooops!"
                   Just ofs -> ctx.dispatch (SetProgramCounter ofs)
@@ -351,9 +365,7 @@ useApp = Hooks.wrap hook
             }
         Runtime.step machine
 
-      execInstrucion = do
-        { runtime } <- ctx.getState
-        step runtime =<< fetchCode
+      execInstrucion = fetchCode >>= step
 
       stepProgram = do
         -- liftAff $ Aff.delay $ Milliseconds 300.0
@@ -363,13 +375,12 @@ useApp = Hooks.wrap hook
             case program.code !! runtime.cpu.pgc of
               Just (ofs /\ _)
                 | Just true <- Map.lookup ofs breakpoints -> do
-                    Console.log $ "Break at " <> show ofs
                     ctx.dispatch $ SetRuntimeState Pause
               _ -> execStep
           Runtime.Pause -> do
             nextState <- execInstrucion >>= case _ of
               Runtime.Running -> pure Runtime.Pause
-              st -> pure st
+              st -> logShow st *> pure st
             ctx.dispatch $ SetRuntimeState nextState
           _ -> pure unit
         where
@@ -377,6 +388,7 @@ useApp = Hooks.wrap hook
           nextState <- execInstrucion
           case nextState of
             Runtime.Running -> stepProgram
+            Runtime.Halt -> ctx.dispatch $ SetRuntimeState Runtime.Halt
             _ -> pure unit
 
       runProgram = do
@@ -393,7 +405,6 @@ useApp = Hooks.wrap hook
       listBreakpoints = ctx.getState <#> _.breakpoints
 
       addBreakpoint addr = do
-        Console.log $ "Add break point: " <> show addr
         ctx.dispatch $ SetBreakPoint addr true
 
       toggleBreakpoint addr = do
@@ -403,6 +414,19 @@ useApp = Hooks.wrap hook
           Just enabled -> do
             ctx.dispatch $ SetBreakPoint addr (not enabled)
             pure $ not enabled
+
+      togglePause = do
+        { runtime } <- ctx.getState
+        case runtime.state of
+          Runtime.Running -> ctx.dispatch $ SetRuntimeState Runtime.Pause
+          Runtime.Pause -> ctx.dispatch $ SetRuntimeState Runtime.Running
+          Runtime.Loaded -> ctx.dispatch $ SetRuntimeState Runtime.Pause
+          _ -> pure unit
+
+      resetRuntime = do
+        ctx.dispatch ResetRuntime
+        ctx.getState >>= \{ gasm: gdofile } -> do
+          loadProgram ctx gdofile
 
     useLifecycleEffect do
       ctx.dispatch SetLoading
@@ -431,10 +455,14 @@ useApp = Hooks.wrap hook
       , readAccum: ctx.getState >>= \st -> pure st.runtime.cpu.acc
       , runProgram
       , stepProgram
+      , togglePause
       , breakpoints: state.breakpoints
       , listBreakpoints
       , addBreakpoint
       , toggleBreakpoint
+      , resetRuntime
+      , resetCompile: ctx.dispatch $ ResetCompile
+      , console: state.console
       }
 
   loadProgram ctx gdofile = do
@@ -456,7 +484,7 @@ useApp = Hooks.wrap hook
       text = resolveCodeLabelAndName <$> gdofile.text
       program = text <> entry
     entrypoint <- case entry !! 0 of
-      Just (ofs /\ _) -> Console.log (show $ entry !! 0) $> ofs
+      Just (ofs /\ _) -> pure ofs
       Nothing -> unsafeCrashWith "No entry point!"
     ctx.dispatch $ SetProgram entrypoint program
     ctx.dispatch $ SetProgramCounter (Array.length text)

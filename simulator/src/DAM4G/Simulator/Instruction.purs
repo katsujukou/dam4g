@@ -4,9 +4,7 @@ import Prelude
 
 import Data.Either (Either)
 import Data.Generic.Rep (class Generic)
-import Data.Maybe (Maybe)
 import Data.Show.Generic (genericShow)
-import Data.Tuple.Nested (type (/\))
 
 data CodeLabel = CodeLabel String Int
 
@@ -25,8 +23,11 @@ derive instance Generic Constant _
 instance Show Constant where
   show = genericShow
 
+type ConstructorTag = Int
+
 data Instruction
   = KStop
+  | KExit
   | KNoop
   | KLabel Int Int
   -- Constant and literals 
@@ -34,6 +35,7 @@ data Instruction
   | KGetGlobal (Either Int String)
   | KSetGlobal (Either Int String)
   | KField Int
+  | KMakeBlock ConstructorTag Int
   -- Function handling
   | KClosure (Either CodeLabel Int)
   | KApply
@@ -67,6 +69,9 @@ data Instruction
   | KBranch Int
   | KBranchIf Int
   | KBranchIfNot Int
+  | KBranchIfNotImm Constant (Either CodeLabel Int)
+  | KBranchIfNotTag ConstructorTag (Either CodeLabel Int)
+  | KBranchIfEqTag ConstructorTag (Either CodeLabel Int)
   | KUndefined Int
 
 derive instance Eq Instruction

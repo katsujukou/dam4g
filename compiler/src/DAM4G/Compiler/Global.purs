@@ -4,7 +4,7 @@ import Prelude
 
 import DAM4G.Compiler.Name (ConstructorName, GlobalName, Ident, OperatorName, Qualified(..), TypeName, unqualify)
 import DAM4G.Compiler.Primitive (Primitive)
-import DAM4G.Compiler.Types (Associativity)
+import DAM4G.Compiler.Types (Associativity, ConstructorTag)
 import DAM4G.Compiler.Types as T
 import Data.Array as Array
 import Data.Bifunctor (rmap)
@@ -32,7 +32,8 @@ type NormalDesc = {}
 type ConstructorDesc =
   { name :: Qualified ConstructorName
   , typname :: Qualified TypeName
-  , sig :: T.Type_ Unit
+  , tag :: ConstructorTag
+  , argTypes :: Array (T.Type_ Unit)
   }
 
 type PrimDesc =
@@ -40,7 +41,7 @@ type PrimDesc =
 
 type TypeInfo =
   { kind :: T.Kind Unit
-  , constrs :: Array GlobalName
+  , constrs :: Array (Qualified ConstructorName)
   , opened :: Boolean
   }
 

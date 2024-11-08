@@ -9,6 +9,7 @@ printByte :: Int -> String
 printByte n = SCU.slice (-3) (-1) $ "00" <> toStringAs hexadecimal n <> "0"
 
 print2Byte :: Int -> String
+print2Byte (-1) = "FFFF"
 print2Byte n = SCU.slice (-5) (-1) ("0000" <> toStringAs hexadecimal n <> "0")
 
 printWord :: Int -> String

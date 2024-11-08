@@ -7,15 +7,17 @@ import Control.Monad.Rec.Class (class MonadRec, Step(..), tailRecM)
 import Control.Monad.State (StateT, get, modify_, runStateT)
 import DAM4G.Compiler.Global (GlobalDesc, Env)
 import DAM4G.Compiler.Global as G
-import DAM4G.Compiler.Name (ConstructorName(..), GlobalName, Ident(..), NameSource(..), OperatorName, Qualified(..), TypeName(..), identToConstructorName, identToTypeName, unqualify, upperIdentRegex)
+import DAM4G.Compiler.Name (ConstructorName(..), GlobalName, Ident(..), ModuleName(..), NameSource(..), OperatorName, Qualified(..), TypeName(..), identToConstructorName, identToTypeName, unqualify, upperIdentRegex)
+import DAM4G.Compiler.Name as N
+import DAM4G.Compiler.Syntax.AST (SourceIdent)
 import DAM4G.Compiler.Syntax.AST as AST
 import DAM4G.Compiler.Syntax.CST (patternAnn)
 import DAM4G.Compiler.Syntax.CST as CST
 import DAM4G.Compiler.Syntax.Error (SyntaxError(..))
 import DAM4G.Compiler.Syntax.Source (SourcePhrase, emptyLoc, (..), (@@))
-import DAM4G.Compiler.Types (Associativity(..))
+import DAM4G.Compiler.Types (Associativity(..), ConstructorTag)
 import DAM4G.Compiler.Types as T
-import Data.Array (catMaybes, foldr)
+import Data.Array (catMaybes, foldr, mapWithIndex)
 import Data.Array as Array
 import Data.Array.NonEmpty as NonEmptyArray
 import Data.Bifunctor (rmap)
@@ -27,6 +29,7 @@ import Data.Maybe (Maybe(..))
 import Data.Show.Generic (genericShow)
 import Data.String.Regex as Re
 import Data.Traversable (class Traversable, for, traverse)
+import Data.TraversableWithIndex (forWithIndex)
 import Data.Tuple (Tuple(..), fst, snd, uncurry)
 import Data.Tuple.Nested (type (/\), (/\))
 import Effect.Class.Console (logShow)
@@ -118,7 +121,7 @@ registerType
    . Monad m
   => Qualified TypeName
   -> T.Kind Unit
-  -> Array GlobalName
+  -> Array (Qualified ConstructorName)
   -> CheckM m Unit
 registerType typename kind constrs = do
   modify_ \st -> st
@@ -156,17 +159,17 @@ freshTypeVar = do
   modify_ (\st -> st { tvar = tvar + 1 })
   pure $ T.TVar { src: Compiler } $ Ident ("t" <> show tvar)
 
-freshVars :: forall m. MonadRec m => Int -> CheckM m (Array Ident)
+freshVars :: forall m. Monad m => Int -> CheckM m (Array Ident)
 freshVars n
   | n <= 0 = pure []
   | otherwise = do
       let
-        go (vars /\ 0) = pure $ Done vars
-        go (vars /\ n') = do
+        go vars 0 = pure vars
+        go vars n' = do
           { var } <- get
           modify_ \st -> st { var = var + 1 }
-          pure $ Loop $ Array.snoc vars (Ident $ "v" <> show n) /\ (n' - 1)
-      tailRecM go ([] /\ n)
+          go (Array.snoc vars (Ident $ "v" <> show var)) (n' - 1)
+      go [] n
 
 freshVar :: forall m. MonadRec m => CheckM m Ident
 freshVar = freshVars 1 >>= case _ of
@@ -207,16 +210,16 @@ checkModule (CST.Module cstModule) = do
       CST.DeclSet { loc } name cs
         | Just typname' <- identToTypeName name.it -> do
             let typname = qualify typname'
-            constrs <- for cs \c -> do
+            constrs <- forWithIndex cs \i c -> do
               let constr = CST.nameOfConstructor c
               case identToConstructorName constr.it of
                 Nothing -> throwError $ InvalidConstructorName constr.at constr.it
                 Just constrName -> do
-                  c' <- checkConstr typname c
+                  c' <- checkConstr typname i c
                   registerDecl (qualify $ coerce constrName)
                     { opened: true
                     , desc: G.Constructor c'
-                    , typ: c'.sig
+                    , typ: T.TGlobal unit c'.typname
                     }
                   pure c'
 
@@ -226,21 +229,26 @@ checkModule (CST.Module cstModule) = do
               { loc
               , typname
               , kind: T.KndType unit
-              , constrs: constrs <#> \c -> AST.TypeDeclarationConstructor
+              , constrs: constrs # mapWithIndex \i c -> AST.TypeDeclarationConstructor
                   { name: c.name
-                  , typ: c.sig
+                  , tag: i
+                  , argTypes: c.argTypes
                   }
               }
         | otherwise -> throwError $ InvalidTypName name.at name.it
       _ -> pure Nothing
 
-  checkConstr :: Qualified TypeName -> CST.Constructor CST.Ann -> _ G.ConstructorDesc
-  checkConstr typname = case _ of
-    CST.ConstrNull a ident -> doCheck a ident Nothing
-    CST.ConstrStructured a ident argType -> checkType argType >>= map (const unit) >>> Just >>> doCheck a ident
+  checkConstr :: Qualified TypeName -> ConstructorTag -> CST.Constructor CST.Ann -> _ G.ConstructorDesc
+  checkConstr typname tag = case _ of
+    CST.ConstrNull a ident -> doCheck a ident []
+    CST.ConstrStructured a ident argType -> do
+      checkType argType
+        >>= case _ of
+          T.TTup _ typs -> doCheck a ident (map (const unit) <$> typs)
+          t -> doCheck a ident [ const unit <$> t ]
     where
-    doCheck :: CST.Ann -> SourcePhrase () Ident -> Maybe (T.Type_ Unit) -> CheckM m G.ConstructorDesc
-    doCheck _ ident argType = case identToConstructorName ident.it of
+    doCheck :: CST.Ann -> SourcePhrase () Ident -> Array (T.Type_ Unit) -> CheckM m G.ConstructorDesc
+    doCheck _ ident argTypes = case identToConstructorName ident.it of
       Nothing -> throwError $ InvalidConstructorName ident.at ident.it
       Just constrName -> do
         lookupOpenedConstructor (coerce constrName) >>= case _ of
@@ -248,25 +256,28 @@ checkModule (CST.Module cstModule) = do
           _ -> pure
             { name: qualify constrName
             , typname
-            , sig: case argType of
-                Nothing -> T.TGlobal unit (coerce typname)
-                Just argType' -> T.TFunc unit argType' (T.TGlobal unit typname)
+            , tag
+            , argTypes
             }
   checkDecls decls = catMaybes <$>
     for decls case _ of
-      CST.Decl a ident pats cstExp -> case NonEmptyArray.fromArray pats of
-        Nothing -> do
-          expr <- checkExpr cstExp
-          pure $ Just $ AST.NonRec
-            { ident
-            , expr
-            }
-        Just pats' -> do
-          expr <- checkExpr $ CST.ExprFunc { loc: ident.at .. a.loc } pats' cstExp
-          pure $ Just $ AST.NonRec
-            { ident
-            , expr
-            }
+      CST.Decl a ident pats cstExp -> do
+        expr <- case NonEmptyArray.fromArray pats of
+          Nothing -> checkExpr cstExp
+          Just pats' -> checkExpr $ CST.ExprFunc { loc: ident.at .. a.loc } pats' cstExp
+        let
+          decl' = AST.NonRec { ident, expr }
+          typ = case AST.exprAnn expr of
+            AST.AnnExpr _ t -> const unit <$> t
+
+        registerDecl (qualify ident.it)
+          { desc: G.Normal {}
+          , typ
+          , opened: true
+          }
+
+        pure $ Just $ decl'
+
       _ -> pure Nothing
 
 checkType :: forall m. Monad m => CST.Type_ CST.Ann -> CheckM m (T.Type_ T.TypeAnn)
@@ -274,6 +285,7 @@ checkType = case _ of
   CST.TIdent a Nothing ident
     | Just typname <- identToTypeName ident -> do
         lookupOpenedType typname >>= case _ of
+          -- #TODO: 再帰型はどうやってチェックする？
           Nothing -> throwError $ UnboundTypeName typname
           Just (gtypname /\ _) -> pure $ T.TGlobal { src: User a.loc } gtypname
     | otherwise -> pure $ T.TVar { src: User a.loc } ident
@@ -285,8 +297,28 @@ checkType = case _ of
           Nothing -> do
             let (Qualified modname' ident') = gtypname
             throwError $ ModuleDoesNotExportName modname' (coerce ident')
-
-  _ -> unsafeCrashWith "Not implemented"
+  CST.TTup a typs -> T.TTup { src: User a.loc } <$> traverse checkType typs
+  CST.TFunc a argTyps retTyp -> do
+    let
+      go typs = Array.uncons >>> case _ of
+        Nothing -> pure typs
+        Just { head, tail: rest } -> do
+          argTyp <- checkType head
+          go (typs `Array.snoc` argTyp) rest
+    ret <- checkType retTyp
+    typs <- go [] $ NonEmptyArray.toArray argTyps
+    pure $ typs #
+      flip Array.foldr ret
+        ( \typ acc -> do
+            let
+              a' = case (T.typeAnn typ).src, (T.typeAnn acc).src of
+                N.User loc1, N.User loc2 -> { src: N.User (loc1 .. loc2) }
+                N.User loc, N.Compiler -> { src: N.User loc }
+                N.Compiler, N.User loc -> { src: N.User loc }
+                _, _ -> { src: N.Compiler }
+            T.TFunc a' typ acc
+        )
+  t -> let _ = unsafePerformEffect (logShow t) in unsafeCrashWith "Not implemented"
 
 checkPattern :: forall m. Monad m => CST.Pattern CST.Ann -> CheckM m (AST.Pattern CST.Ann)
 checkPattern = go'
@@ -296,18 +328,19 @@ checkPattern = go'
     CST.PatConst a cst -> pure $ AST.PatConst a cst
     CST.PatVar a v -> pure $ AST.PatVar a v
     CST.PatList _ _ -> throwError $ NotSupportedYet "List pattern"
-    CST.PatConstructor a constrMod constr pats
-      | Just constrname <- identToConstructorName constr -> case constrMod of
-          Nothing -> do
-            lookupOpenedConstructor constrname >>= case _ of
-              Just desc -> do
-                AST.PatConstructor a desc.name <$> traverse go' pats
-              Nothing -> throwError $ UnknownConstructor Nothing constrname
-          Just modname' -> do
-            lookupConstructor (Qualified modname' constrname) >>= case _ of
-              Nothing -> throwError $ UnknownConstructor (Just modname') constrname
-              Just desc -> do
-                AST.PatConstructor a desc.name <$> traverse go' pats
+    CST.PatTuple a pats -> AST.PatTuple a <$> traverse go' pats
+    CST.PatConstructor a constrMod constr mbPat
+      | Just constrname <- identToConstructorName constr -> do
+          mbConstrDesc <- case constrMod of
+            Nothing -> lookupOpenedConstructor constrname
+            Just modname' -> lookupConstructor (Qualified modname' constrname)
+          case mbConstrDesc of
+            Nothing -> throwError $ UnknownConstructor constrMod constrname
+            Just desc -> traverse go' mbPat >>= case _ of
+              Just pat
+                | AST.PatTuple _ pats <- pat -> pure $ AST.PatConstructor a desc.typname desc.tag pats
+                | otherwise -> pure $ AST.PatConstructor a desc.typname desc.tag [ pat ]
+              Nothing -> pure $ AST.PatConstructor a desc.typname desc.tag []
       | otherwise -> throwError $ NotAConstructor Nothing constr
     CST.PatTyped a p t -> AST.PatTyped a <$> go' p <*> checkType t
     CST.PatAlias a p v -> AST.PatAlias a <$> go' p <*> pure v
@@ -315,10 +348,10 @@ checkPattern = go'
 
 checkExpr :: forall m. MonadRec m => CST.Expr CST.Ann -> CheckM m Expr
 checkExpr =
-  removeParens
-    >=> desugarOperatorAliases
-    >=> desugarPatternArgs
+  desugarPatternArgs
     >=> desugarMatchFn
+    >=> desugarLetBinding
+    >=> desugarOperatorAliases
     >=> convertExpr
     >=> annotateWithType
 
@@ -338,32 +371,31 @@ convertExpr = go
               lookupOpenedConstructor (coerce ident)
             Just modname -> do
               lookupConstructor (Qualified modname $ coerce ident)
-
           case mbConstr of
             Nothing -> throwError $ UnknownConstructor qual (coerce ident)
             Just constr
-              | not (T.isFunctionType constr.sig) -> pure $ AST.ExprConstructor a constr.name Nothing
+              | [] <- constr.argTypes -> pure $ AST.ExprConstructor a constr.name []
               | otherwise -> pure $ AST.ExprGlobal a (coerce constr.name)
       | otherwise -> do
           lookupOpenedName ident >>= case _ of
             Nothing -> pure $ AST.ExprVar a ident
             Just (gloname /\ _) -> pure $ AST.ExprGlobal a gloname
     CST.ExprList _ _ -> throwError $ NotSupportedYet "list"
-    CST.ExprTuple _ _ -> throwError $ NotSupportedYet "tuple"
-
+    CST.ExprTuple a exps -> AST.ExprTuple a <$> traverse go exps
     CST.ExprFunc a args body -> go body >>= flip (convertExprFunc a) (NonEmptyArray.toArray args)
     CST.ExprApp a func args -> go func >>= convertExprApp a (NonEmptyArray.toArray args)
     CST.ExprTyped a exp typ -> do
       AST.ExprTyped a <$> go exp <*> checkType typ
-    -- CST.ExprLet a rec binds body ->
-    --   CST.ExprLet a rec
-    --     <$> traverse (\(CST.Binder a' pat exp) -> CST.Binder a' pat <$> go exp) binds
-    --     <*> go body
+    CST.ExprLet a CST.NonRec binds body
+      | [ binder ] <- NonEmptyArray.toArray binds
+      , CST.Binder a (CST.PatVar va name) exp1 <- binder -> do
+          AST.ExprLet a (name @@ va.loc) <$> go exp1 <*> go body
+      | otherwise -> unsafeCrashWith "Impossible"
     CST.ExprIf a cond ifSo notSo -> AST.ExprIf a <$> go cond <*> go ifSo <*> go notSo
     CST.ExprParensed _ exp -> go exp
     CST.ExprOperator _ _ _ -> unsafeCrashWith "Imposible"
     CST.ExprMatchFn _ _ _ -> unsafeCrashWith "Impossible"
-    CST.ExprMatch a heads matrix -> AST.ExprMatch a <$> traverse go (NonEmptyArray.toArray heads) <*> convertMatchMatrix matrix
+    CST.ExprMatch a heads matrix -> AST.ExprMatch a <$> convertMatchMatrix (NonEmptyArray.toArray heads) matrix
     exp -> do
       let _ = unsafePerformEffect (logShow exp)
       unsafeCrashWith "Not implemented"
@@ -377,8 +409,9 @@ convertExpr = go
           app <- case funcExp of
             AST.ExprGlobal _ gloname -> do
               lookupConstructor (coerce gloname) >>= case _ of
-                Just constr -> pure $
-                  AST.ExprConstructor (AST.exprAnn funcExp) constr.name (Just funcArg)
+                Just constr -> case funcArg of
+                  AST.ExprTuple _ exps -> pure $ AST.ExprConstructor (AST.exprAnn funcExp) constr.name exps
+                  _ -> pure $ AST.ExprConstructor (AST.exprAnn funcExp) constr.name [ funcArg ]
                 Nothing -> pure (AST.ExprApp a funcExp funcArg)
             _ -> pure (AST.ExprApp a funcExp funcArg)
           go' app argRest
@@ -387,28 +420,34 @@ convertExpr = go
 
   convertExprFunc a body =
     let
-      go' args = Array.uncons >>> case _ of
-        Nothing -> pure $ foldr (uncurry $ AST.ExprFunc a) body args
-        Just { head: arg, tail: argsRest } -> do
-          case arg of
-            CST.PatTyped { loc } pat' typ
-              | CST.PatVar _ ident <- pat' -> do
-                  typ' <- checkType typ
-                  go' (Array.snoc args ((ident @@ loc) /\ Just typ')) argsRest
-              | otherwise -> unsafeCrashWith "Impossible"
-            CST.PatVar { loc } ident -> go' (Array.snoc args ((ident @@ loc) /\ Nothing)) argsRest
-            _ -> unsafeCrashWith "Impossible"
+      go' args =
+        let
+          _ = unsafePerformEffect (logShow args)
+        in
+          Array.uncons >>> case _ of
+            Nothing -> pure $ foldr (uncurry $ AST.ExprFunc a) body args
+            Just { head: arg, tail: argsRest } -> do
+              case arg of
+                CST.PatTyped { loc } pat' typ
+                  | CST.PatVar _ ident <- pat' -> do
+                      typ' <- checkType typ
+                      go' (Array.snoc args ((ident @@ loc) /\ Just typ')) argsRest
+                  | otherwise -> unsafeCrashWith "Impossible"
+                CST.PatVar { loc } ident -> go' (Array.snoc args ((ident @@ loc) /\ Nothing)) argsRest
+                _ -> unsafeCrashWith "Impossible"
     in
       go' []
 
-  convertMatchMatrix (CST.PatternMatrix matrix) = do
-    AST.MatchMatrix
-      <$>
-        ( matrix # traverse \m -> do
-            pats <- traverse checkPattern m.pats
-            act <- go m.act
-            pure { pats, act }
-        )
+  convertMatchMatrix matchHeads (CST.PatternMatrix matrix') = do
+    heads <- traverse go matchHeads
+    matrix <- matrix' # traverse \m -> do
+      pats <- traverse checkPattern m.pats
+      act <- go m.act
+      pure { pats, act }
+    pure $ AST.MatchMatrix
+      { heads
+      , matrix
+      }
 
 desugarMatchFn :: forall m. MonadRec m => CST.Expr CST.Ann -> CheckM m (CST.Expr CST.Ann)
 desugarMatchFn = traverseExpr f
@@ -447,13 +486,13 @@ desugarPatternArgs = traverseExpr f
     case _ of
       CST.ExprFunc a pats body -> do
         let
-          collectPatternArgs (acc /\ pats') = case Array.uncons pats' of
-            Nothing -> pure $ Done acc
+          collectPatternArgs acc = Array.uncons >>> case _ of
+            Nothing -> pure acc
             Just { head: pat, tail: rest }
               | CST.PatTyped _ (CST.PatVar _ _) _ <- pat ->
-                  pure $ Loop $ (acc { args = acc.args `Array.snoc` pat }) /\ rest
+                  collectPatternArgs (acc { args = acc.args `Array.snoc` pat }) rest
               | CST.PatVar _ _ <- pat ->
-                  pure $ Loop $ (acc { args = acc.args `Array.snoc` pat }) /\ rest
+                  collectPatternArgs (acc { args = acc.args `Array.snoc` pat }) rest
               | otherwise -> do
                   var <- freshVar
                   let
@@ -464,10 +503,10 @@ desugarPatternArgs = traverseExpr f
                       , matchHeads: Array.snoc acc.matchHeads argExp
                       , matchPats: Array.snoc acc.matchPats pat
                       }
-                  pure $ Loop $ next /\ rest
-        { args, matchHeads, matchPats } <- tailRecM
-          collectPatternArgs
-          ({ args: [], matchHeads: [], matchPats: [] } /\ (NonEmptyArray.toArray pats))
+                  collectPatternArgs next rest
+        { args, matchHeads, matchPats } <- collectPatternArgs
+          { args: [], matchHeads: [], matchPats: [] }
+          (NonEmptyArray.toArray pats)
 
         let
           funcArgs = case NonEmptyArray.fromArray args of
@@ -501,7 +540,10 @@ treeAnn = case _ of
   Branch a _ -> a
 
 desugarOperatorAliases :: forall m. MonadRec m => CST.Expr CST.Ann -> CheckM m (CST.Expr CST.Ann)
-desugarOperatorAliases = traverseExpr f
+desugarOperatorAliases = traverseExpr'
+  (\a mod id -> pure $ CST.ExprIdent a mod id)
+  pure
+  f
   where
   f = case _ of
     CST.ExprOperator a expHead expOps -> rebracketOperators a expHead (NonEmptyArray.toArray expOps)
@@ -612,6 +654,52 @@ desugarOperatorAliases = traverseExpr f
           (CST.ExprIdent { loc } (Just modname) realname)
           (NonEmptyArray.cons' (foldTree lhs) [ foldTree rhs ])
 
+emptyAnn :: CST.Ann
+emptyAnn = { loc: emptyLoc }
+
+desugarLetBinding
+  :: forall m
+   . MonadRec m
+  => CST.Expr CST.Ann
+  -> CheckM m (CST.Expr CST.Ann)
+desugarLetBinding = traverseExpr f
+  where
+  f = case _ of
+    CST.ExprLet a CST.NonRec binders body -> letToMatch body (NonEmptyArray.toArray binders)
+    exp -> pure exp
+
+  letToMatch body = go
+    where
+    go :: Array (CST.Binder CST.Ann) -> CheckM m _
+    go = Array.uncons >>> case _ of
+      Nothing -> pure body
+      Just { head: binder@(CST.Binder ba pat exp), tail: bindRest } ->
+        case pat of
+          -- 変数への束縛 (let x = e in ...)の場合は何もしない
+          CST.PatVar _ _ -> do
+            body' <- go bindRest
+            pure $
+              CST.ExprLet emptyAnn CST.NonRec
+                (NonEmptyArray.singleton binder)
+                body'
+
+          -- destructuring (let Box n = e in ...等)の場合、パターンマッチにdesugarする
+          _ -> do
+            body' <- go bindRest
+            name <- freshVar
+            pure $
+              CST.ExprLet emptyAnn CST.NonRec
+                ( NonEmptyArray.singleton
+                    (CST.Binder ba (CST.PatVar emptyAnn name) exp)
+                )
+                ( CST.ExprMatch emptyAnn
+                    (NonEmptyArray.singleton (CST.ExprIdent emptyAnn Nothing name))
+                    ( CST.PatternMatrix
+                        [ { pats: [ pat ], act: body' }
+                        ]
+                    )
+                )
+
 removeParens :: forall m a. Monad m => CST.Expr a -> CheckM m (CST.Expr a)
 removeParens = traverseExpr f
   where
@@ -679,3 +767,28 @@ traverseExpr f = go
     CST.ExprMatch a exps matrix -> f =<< CST.ExprMatch a <$> traverse go exps <*> traversePatternMatrix go matrix
     CST.ExprMatchFn a pats matrix -> f =<< CST.ExprMatchFn a pats <$> traversePatternMatrix f matrix
     exp -> f exp
+
+traverseExpr'
+  :: forall m a
+   . Monad m
+  => (a -> Maybe ModuleName -> Ident -> CheckM m (CST.Expr a))
+  -> (CST.Type_ a -> CheckM m (CST.Type_ a))
+  -> (CST.Expr a -> CheckM m (CST.Expr a))
+  -> CST.Expr a
+  -> CheckM m (CST.Expr a)
+traverseExpr' onIdent onType f = go
+  where
+  go = case _ of
+    exp@(CST.ExprConst _ _) -> pure exp
+    CST.ExprIdent a modname ident -> onIdent a modname ident
+    CST.ExprList a exps -> f =<< CST.ExprList a <$> traverse go exps
+    CST.ExprTuple a exps -> f =<< CST.ExprTuple a <$> traverse go exps
+    CST.ExprFunc a pats body -> f =<< CST.ExprFunc a pats <$> go body
+    CST.ExprLet a rec binds body -> f =<< CST.ExprLet a rec <$> traverseBinders go binds <*> go body
+    CST.ExprApp a func args -> f =<< f =<< CST.ExprApp a <$> go func <*> traverse go args
+    CST.ExprOperator a exp args -> f =<< CST.ExprOperator a <$> go exp <*> traverseOperatorArgs go args
+    CST.ExprIf a cond ifSo notSo -> f =<< CST.ExprIf a <$> go cond <*> go ifSo <*> go notSo
+    CST.ExprParensed a exp -> f =<< CST.ExprParensed a <$> go exp
+    CST.ExprTyped a exp typ -> f =<< (\exp' -> CST.ExprTyped a exp' typ) <$> go exp
+    CST.ExprMatch a exps matrix -> f =<< CST.ExprMatch a <$> traverse go exps <*> traversePatternMatrix go matrix
+    CST.ExprMatchFn a pats matrix -> f =<< CST.ExprMatchFn a pats <$> traversePatternMatrix f matrix

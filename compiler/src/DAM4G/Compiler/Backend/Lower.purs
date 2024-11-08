@@ -11,6 +11,7 @@ import DAM4G.Compiler.Name (Ident(..), ModuleName)
 import DAM4G.Compiler.Optimizer.IR (ELC(..), Var(..))
 import DAM4G.Compiler.Optimizer.IR as IR
 import DAM4G.Compiler.Primitive (Primitive(..))
+import DAM4G.Compiler.Types (AtomicConstant(..), StructuredConstant(..))
 import Data.Array as Array
 import Data.Identity (Identity(..))
 import Data.List (List, (:))
@@ -22,6 +23,8 @@ import Data.Newtype (unwrap)
 import Data.Traversable (for)
 import Data.Tuple (Tuple(..), fst)
 import Data.Tuple.Nested (type (/\), (/\))
+import Effect.Class.Console as Console
+import Effect.Unsafe (unsafePerformEffect)
 import Partial.Unsafe (unsafeCrashWith)
 
 type ELTerm = IR.ELC IR.Ann
@@ -107,7 +110,7 @@ compileDecl { ident, term } = do
   where
   compileInitializerSection = do
     setNamespace global
-    code <- compileTerm ident term (contOfIdent ident)
+    code <- compileTerm ident NoLabel term (contOfIdent ident)
     pure $ (List.foldl Array.snoc [] code)
 
   compileTextSection = do
@@ -129,7 +132,7 @@ compileDecl { ident, term } = do
     getToCompile >>= case _ of
       Just cb
         | CodeLabel (Just ident') _ <- cb.lbl -> do
-            code <- compileTerm (Ident ident') cb.term (KReturn : k)
+            code <- compileTerm (Ident ident') NoLabel cb.term (KReturn : k)
             if cb.arity == 1 then do
               compileMore $ KLabel cb.lbl : code
             else do
@@ -163,13 +166,15 @@ nGrab n = go n
   go 0 code = code
   go n' code = go (n' - 1) (KGrab : code)
 
-compileTerm :: Ident -> ELTerm -> List Instruction -> LowerM (List Instruction)
-compileTerm (Ident ident) =
+compileTerm :: Ident -> CodeLabel -> ELTerm -> List Instruction -> LowerM (List Instruction)
+compileTerm (Ident ident) staticfail =
   go
   where
   go term k = case term of
     ELVar _ (Var n) -> pure $ KAccess n : k
-    ELConst _ cst -> pure $ KQuote cst : k
+    ELConst _ cst -> case cst of
+      SCAtom acst -> pure $ KQuote acst : k
+      SCBlock tag elems -> unsafeCrashWith "Not implemented"
     ELApp _ tmAbs args
       | KReturn : k' <- k -> do
           body <- go tmAbs (KTailApply : k')
@@ -200,17 +205,68 @@ compileTerm (Ident ident) =
             k' <- (KLet : _) <$> compArgs rest
             go arg k'
       compArgs tmArgs
+    ELLetRec _ _ _ -> unsafeCrashWith "Not implemented: letrec"
     ELPrim _ prim args -> case prim of
       PGetGlobal modname id -> pure $ KGetGlobal id : k
       PSetGlobal modname id
         | [ arg ] <- args -> go arg $ KSetGlobal id : k
         | otherwise -> unsafeCrashWith "Impossible"
+      PMakeBlock tag -> do
+        let sz = Array.length args
+        compArgList args (KMakeBlock tag sz : k)
       _ -> compArgList args (compPrim prim k)
     ELIf _ cond ifSo notSo -> compTest cond ifSo notSo k
-    _ -> unsafeCrashWith "Not Implemented"
+    ELCond _ tmHead tbl -> do
+      branch1 /\ k' <- mkBranch k
+      let
+        compTests = Array.uncons >>> case _ of
+          Nothing -> unsafeCrashWith "Impossible"
+          Just { head: cst /\ ifSo, tail: rest }
+            | [] <- rest -> do
+                branchOrExit (KBranchIfNotImm cst) staticfail <$> go ifSo k'
+            | otherwise -> do
+                lbl1 <- newLabel
+                k1 <- compTests rest
+                (KBranchIfNotImm cst lbl1 : _)
+                  <$> go ifSo (branch1 : KLabel lbl1 : k1)
+      k2 <- compTests tbl
+      go tmHead k2
+    ELSwitch _ tmHead tbl -> do
+      branch1 /\ k' <- mkBranch k
+      let
+        compTable = Array.uncons >>> case _ of
+          Nothing -> unsafeCrashWith "Impossible"
+          Just { head: tag /\ ifSo, tail: rest }
+            | [] <- rest -> do
+                lblIfSo <- newLabel
+                k1 <- go ifSo k'
+                pure $
+                  KBranchIfEqTag tag lblIfSo : KExit : KLabel lblIfSo : k1
+            | otherwise -> do
+                lbl1 <- newLabel
+                k1 <- compTable rest
+                (KBranchIfNotTag tag lbl1 : _)
+                  <$> go ifSo (branch1 : KLabel lbl1 : k1)
+      k2 <- compTable tbl
+      go tmHead k2
+    ELTrap _ term1 term2
+      | ELRaise _ <- term2 -> go term1 k
+      | otherwise -> do
+          branch1 /\ k1 <- mkBranch k
+          k2 <- go term2 k1
+          lbl2 <- newLabel
+          compileTerm (Ident ident) lbl2 term1 (branch1 : KLabel lbl2 : k2)
+    ELRaise _
+      | CodeLabel _ _ <- staticfail -> pure $ KBranch staticfail : k
+      | otherwise -> pure $ KExit : k
+  -- _ -> unsafeCrashWith "Not Implemented"
+
+  branchOrExit instr lbl k = case lbl of
+    CodeLabel _ _ -> instr lbl : k
+    _ -> KExit : k
 
   compPrim prim k = case prim of
-    PAccess n -> KAccess n : k
+    PField n -> KField n : k
     P_i32_add -> K_i32_add : k
     P_i32_sub -> K_i32_sub : k
     P_i32_mul -> K_i32_mul : k

@@ -8,18 +8,23 @@ module DAM4G.Compiler
 import Prelude
 
 import DAM4G.Compiler.Backend.CodeGen (emit, mkGdoFile)
-import DAM4G.Compiler.Backend.Lower (lower)
-import DAM4G.Compiler.Name (Ident(..), ModuleName(..))
-import DAM4G.Compiler.Optimizer.IR (ELC(..), Var(..))
-import DAM4G.Compiler.Optimizer.IR as IR
-import DAM4G.Compiler.Primitive (Primitive(..))
-import DAM4G.Compiler.Value (Constant(..))
+import DAM4G.Compiler.Backend.Lower as Backend
+import DAM4G.Compiler.Base (baseEnv)
+import DAM4G.Compiler.Optimizer.Translate as TR
+import DAM4G.Compiler.Syntax.CST (printToken)
+import DAM4G.Compiler.Syntax.Error as SyntaxError
+import DAM4G.Compiler.Syntax.Parser as Parser
+import DAM4G.Syntax.WellFormedness as WF
 import Data.ArrayBuffer.ArrayBuffer as AB
 import Data.ArrayBuffer.Types (ArrayBuffer)
 import Data.Either (Either(..))
+import Data.Identity (Identity(..))
 import Data.Maybe (Maybe(..))
+import Data.Newtype (unwrap)
 import Data.Nullable (Nullable, null, toNullable)
+import Data.Tuple.Nested ((/\))
 import Effect (Effect)
+import Effect.Class.Console as Console
 
 data CompileInput
   = InpString String
@@ -32,114 +37,41 @@ type CompileOutput =
 
 type CompileResult = Either String CompileOutput
 
-compile :: CompileInput -> Effect CompileResult
-compile _ = do
-  let
-    program = IR.Module
-      { name: ModuleName "Sample"
-      , decls:
-          -- [ IR.NonRec $ IR.Decl
-          --     { ident: Ident "add"
-          --     , term: ELAbs unit 2
-          --         ( ELPrim unit P_i32_add
-          --             [ ELVar unit (Var 1)
-          --             , ELVar unit (Var 0)
-          --             ]
-          --         )
-          --     }
-          -- , IR.NonRec $ IR.Decl
-          --     { ident: Ident "f"
-          --     , term: ELAbs unit 1
-          --         ( ELLet unit
-          --             [ ELAbs unit 1
-          --                 ( ELPrim unit P_i32_sub
-          --                     [ ELVar unit (Var 0)
-          --                     , ELConst unit (CstInt 1)
-          --                     ]
-          --                 )
-          --             , ( ELApp unit
-          --                   (ELPrim unit (PGetGlobal $ Ident "add") [])
-          --                   [ ELConst unit (CstInt 1) ]
-          --               )
-          --             ]
-          --             ( ELIf unit
-          --                 ( ELPrim unit P_log_not
-          --                     [ ELPrim unit P_i32_le
-          --                         [ ELVar unit (Var 2)
-          --                         , ELConst unit (CstInt 0)
-          --                         ]
-          --                     ]
-          --                 )
-          --                 (ELApp unit (ELVar unit (Var 0)) [ ELVar unit (Var 2) ])
-          --                 (ELApp unit (ELVar unit (Var 1)) [ ELVar unit (Var 2) ])
-          --             )
-          --         )
-          --     }
-          -- , IR.NonRec $ IR.Decl
-          --     { ident: Ident "it"
-          --     , term:
-          --         ELApp unit
-          --           (ELPrim unit (PGetGlobal $ Ident "f") [])
-          --           [ ELConst unit (CstInt 42)
-          --           ]
-          --     }
-          -- ]
-          [ IR.NonRec $ IR.Decl
-              { ident: Ident "it"
-              , term:
-                  ( ELLet unit
-                      [ ELAbs unit 3
-                          ( ELPrim unit P_i32_add
-                              [ ELVar unit (Var 2)
-                              , ELPrim unit P_i32_add
-                                  [ ELVar unit (Var 1), ELVar unit (Var 0) ]
-                              ]
-                          )
-                      ]
-                      ( ELApp unit
-                          (ELVar unit (Var 0))
-                          [ ELConst unit (CstInt 1)
-                          , ELConst unit (CstInt 3)
-                          , ELConst unit (CstInt 5)
-                          ]
-                      )
-                  )
-              }
-          ]
-      -- [ IR.NonRec $ IR.Decl
-      --     { "ident": Ident "that"
-      --     , "term":
-      --         --   ELAbs unit 1
-      --         ( ELIf unit
-      --             (ELConst unit $ CstBool true)
-      --             (ELConst unit $ CstInt 1)
-      --             (ELConst unit $ CstInt 2)
-      --         )
-      --     }
-      -- --   ]
+compile :: String -> Effect CompileResult
+compile src = do
+  case Parser.parse "Sample" src of
+    Left err -> pure $ Left $ describeParseError err
+    Right cstModule -> do
+      let Identity res = WF.runCheck baseEnv (WF.checkModule cstModule)
+      case res of
+        Left err -> pure $ Left $ describeCheckError err
+        Right (astModule /\ genv) -> do
 
-      -- , IR.NonRec $ IR.Decl
-      --     { "ident": Ident "it"
-      --     , "term":
-      --         ELAbs unit 1
-      --           ( ELPrim unit
-      --               P_i32_add
-      --               [ ( ELIf unit
-      --                     (ELVar unit (Var 0))
-      --                     (ELConst unit $ CstInt 1)
-      --                     (ELConst unit $ CstInt 2)
-      --                 )
-      --               , ELConst unit (CstInt 42)
-      --               ]
-      --           )
-      --     }
-      -- ]
-      }
-  pure $
-    Right
-      { dasmText: pure "hoge"
-      , emitBin: program # lower >>> mkGdoFile >>> emit
-      }
+          irModule /\ _ <- TR.translate genv astModule
+          pure $ Right
+            { dasmText: pure "program"
+            , emitBin: irModule # Backend.lower >>> mkGdoFile >>> emit
+            }
+  where
+  describeParseError { at, desc } =
+    "An error has occurred during parsing:\n  " <>
+      case desc of
+        SyntaxError.LexUnexpected str -> "Unexpected input: " <> str
+        SyntaxError.UnexpectedToken tok -> "Unexpected token: " <> printToken tok
+
+  describeCheckError err = "An error has occurred during well-formedness cheking:\n  " <>
+    case err of
+      SyntaxError.UnboundOperator op -> "Unbound operator: " <> unwrap op
+      SyntaxError.UnboundName name -> "Unbound name: " <> unwrap name
+      SyntaxError.UnboundTypeName typname -> "Unbound type name: " <> unwrap (unwrap typname)
+      SyntaxError.NotAConstructor _ name -> "Not a valid constructor name: " <> unwrap name
+      SyntaxError.UnknownConstructor _ ctorname -> "Unknown constructor name: " <> unwrap (unwrap ctorname)
+      SyntaxError.InvalidTypName _ name -> "Invalid type name: " <> unwrap name
+      SyntaxError.InvalidConstructorName _ ctorname -> "Invalid constructor name: " <> unwrap ctorname
+      SyntaxError.ModuleDoesNotExportName modname name -> "The Module " <> unwrap modname <> " does not export " <> unwrap name
+      SyntaxError.NotSupportedYet feat -> "I'm VERRRY sorry, but the feature " <> feat <> " is not supported yet."
+      SyntaxError.OperatorsAssociativityConflicts _ -> "The operator associativity conflicts."
+      SyntaxError.ConstructorNameConflicts _ _ -> "Constructor name conflicts"
 
 -- For use from JavaScript.
 compileJs
@@ -149,6 +81,6 @@ compileJs
        , error :: Nullable String
        , output :: Effect ArrayBuffer
        }
-compileJs = InpString >>> compile >=> case _ of
+compileJs = compile >=> case _ of
   Left err -> pure { success: false, error: toNullable (Just err), output: AB.empty 0 }
   Right { emitBin } -> pure { success: true, error: null, output: emitBin }

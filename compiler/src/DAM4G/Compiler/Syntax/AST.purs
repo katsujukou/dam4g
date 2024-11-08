@@ -2,9 +2,9 @@ module DAM4G.Compiler.Syntax.AST where
 
 import Prelude
 
-import DAM4G.Compiler.Constant (AtomicConstant)
-import DAM4G.Compiler.Name (ConstructorName, GlobalName, Ident, ModuleName, OperatorName, Qualified, TypeName)
+import DAM4G.Compiler.Name (ConstructorName, GlobalName, Ident, ModuleName, OperatorName, Qualified, TypeName(..))
 import DAM4G.Compiler.Syntax.Source (SourceLoc, SourcePhrase, emptyLoc)
+import DAM4G.Compiler.Types (AtomicConstant, ConstructorTag)
 import DAM4G.Compiler.Types as T
 import Data.Foldable (class Foldable)
 import Data.Generic.Rep (class Generic)
@@ -20,11 +20,14 @@ data Expr a
   = ExprConst a AtomicConstant
   | ExprVar a Ident
   | ExprGlobal a GlobalName
+  | ExprTuple a (Array (Expr a))
+  | ExprField a (Expr a) Int
   | ExprFunc a SourceIdent (Maybe Type_) (Expr a)
   | ExprApp a (Expr a) (Expr a)
-  | ExprConstructor a (Qualified ConstructorName) (Maybe (Expr a))
+  | ExprLet a SourceIdent (Expr a) (Expr a)
+  | ExprConstructor a (Qualified ConstructorName) (Array (Expr a))
   | ExprIf a (Expr a) (Expr a) (Expr a)
-  | ExprMatch a (Array (Expr a)) (MatchMatrix a)
+  | ExprMatch a (MatchMatrix a)
   | ExprTyped a (Expr a) Type_
 
 derive instance Functor Expr
@@ -39,7 +42,8 @@ data Pattern a
   = PatWildcard a
   | PatVar a Ident
   | PatConst a AtomicConstant
-  | PatConstructor a (Qualified ConstructorName) (Array (Pattern a))
+  | PatTuple a (Array (Pattern a))
+  | PatConstructor a (Qualified TypeName) ConstructorTag (Array (Pattern a))
   | PatAlias a (Pattern a) Ident
   | PatTyped a (Pattern a) Type_
 
@@ -52,11 +56,13 @@ instance Show a => Show (Pattern a) where
   show it = genericShow it
 
 newtype MatchMatrix a = MatchMatrix
-  ( Array
-      { pats :: Array (Pattern a)
-      , act :: Expr a
-      }
-  )
+  { heads :: Array (Expr a)
+  , matrix ::
+      Array
+        { pats :: Array (Pattern a)
+        , act :: Expr a
+        }
+  }
 
 derive instance Newtype (MatchMatrix a) _
 derive instance Functor MatchMatrix
@@ -118,7 +124,8 @@ instance Show TypeDeclaration where
 
 newtype TypeDeclarationConstructor = TypeDeclarationConstructor
   { name :: Qualified ConstructorName
-  , typ :: T.Type_ Unit
+  , tag :: ConstructorTag
+  , argTypes :: Array (T.Type_ Unit)
   }
 
 derive instance Newtype TypeDeclarationConstructor _
@@ -143,10 +150,13 @@ exprAnn = case _ of
   ExprConst a _ -> a
   ExprVar a _ -> a
   ExprGlobal a _ -> a
+  ExprTuple a _ -> a
+  ExprField a _ _ -> a
   ExprConstructor a _ _ -> a
   ExprFunc a _ _ _ -> a
   ExprApp a _ _ -> a
+  ExprLet a _ _ _ -> a
   ExprIf a _ _ _ -> a
-  ExprMatch a _ _ -> a
+  ExprMatch a _ -> a
   ExprTyped a _ _ -> a
 

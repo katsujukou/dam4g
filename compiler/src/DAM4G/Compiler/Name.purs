@@ -5,13 +5,16 @@ import Prelude
 import DAM4G.Compiler.Syntax.Source (SourceLoc)
 import Data.Generic.Rep (class Generic)
 import Data.Maybe (Maybe(..))
-import Data.Newtype (class Newtype)
+import Data.Newtype (class Newtype, unwrap)
 import Data.Show.Generic (genericShow)
 import Data.String.Regex (Regex)
 import Data.String.Regex as Re
 import Data.String.Regex.Flags (unicode)
 import Data.String.Regex.Unsafe (unsafeRegex)
 import Fmt as Fmt
+
+class IsIdent a where
+  toIdent :: a -> Ident
 
 newtype Ident = Ident String
 
@@ -20,6 +23,9 @@ derive instance Ord Ident
 derive instance Newtype Ident _
 instance Show Ident where
   show (Ident id) = Fmt.fmt @"(Ident {id})" { id }
+
+instance IsIdent Ident where
+  toIdent = identity
 
 newtype ModuleName = ModuleName String
 
@@ -45,6 +51,9 @@ derive instance Ord TypeName
 instance Show TypeName where
   show (TypeName tn) = Fmt.fmt @"(TypeName {tn})" { tn: show tn }
 
+instance IsIdent TypeName where
+  toIdent = unwrap
+
 identToConstructorName :: Ident -> Maybe ConstructorName
 identToConstructorName id@(Ident ident)
   | upperIdentRegex `Re.test` ident = Just (ConstructorName id)
@@ -65,6 +74,9 @@ derive instance Eq ConstructorName
 derive instance Ord ConstructorName
 instance Show ConstructorName where
   show (ConstructorName constr) = Fmt.fmt @"(ConstructorName {constr})" { constr: show constr }
+
+instance IsIdent ConstructorName where
+  toIdent = unwrap
 
 isConstructorName :: Ident -> Boolean
 isConstructorName (Ident name) = upperIdentRegex `Re.test` name

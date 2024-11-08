@@ -13,3 +13,30 @@
   src: url('./assets/fonts/HackGen35ConsoleNF-Bold.ttf') format('truetype');
   font-weight: bold;
 }
+
+pre.code-editor-view {
+  background-color: #FFFFFF;
+  border-color: #cacaca;
+  color: #3d3636
+}
+
+pre.code-editor-view>span.keyword {
+  color: #cb5f97;
+}
+
+pre.code-editor-view>span.typename {
+  color: #2a8eb5;
+}
+
+pre.code-editor-view>span.numeric {
+  color: #a9902c;
+}
+
+pre.code-editor-view>span.operator {
+  color: rgb(216, 151, 81)
+}
+
+
+pre.code-editor-view>span.punctuation {
+  color: rgb(214, 94, 146);
+}

@@ -7,12 +7,13 @@ import Data.Maybe (Maybe)
 import Data.Newtype (class Newtype)
 import Fmt as Fmt
 
-data CodeLabel = CodeLabel (Maybe String) Int
+data CodeLabel = NoLabel | CodeLabel (Maybe String) Int
 
 derive instance Eq CodeLabel
 derive instance Ord CodeLabel
 derive instance Generic CodeLabel _
 instance Show CodeLabel where
+  show NoLabel = "NoLabel"
   show (CodeLabel ns lbl) = Fmt.fmt @"(CodeLabel {ns} {lbl})" { ns: show ns, lbl }
 
 type Labeled a =

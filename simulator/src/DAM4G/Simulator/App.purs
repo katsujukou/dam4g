@@ -30,18 +30,13 @@ make = Hooks.component \_ _ -> Hooks.do
   where
   render ctx = do
     HH.div [ HP.class_ $ ClassName "flex flex-col h-screen" ]
-      [ HH.div [ HP.class_ $ ClassName "bg-pink-300 p-3 " ]
+      [ HH.div [ HP.class_ $ ClassName "bg-pink-300 " ]
           [ HH.h1 [ HP.class_ $ ClassName "text-lg text-white" ]
               [ HH.text "DAM4G Simulator" ]
           ]
       , HH.div [ HP.class_ $ ClassName "grid grid-cols-5 gap-5 flex-grow bg-pink-50 " ]
           [ HH.div [ HP.class_ $ ClassName "col-span-2" ]
-              [ HH.div [ HP.class_ $ ClassName "flex flex-col-reverse h-[100%]" ]
-                  [ HH.div [ HP.class_ $ ClassName "h-[160px]" ]
-                      [ HH.text "console" ]
-                  , HH.div [ HP.class_ $ ClassName "flex-grow" ]
-                      [ HH.slot (Proxy :: _ "code-editor") unit CodeEditor.make {} ctx.handleCodeEditor ]
-                  ]
+              [ HH.slot (Proxy :: _ "code-editor") unit CodeEditor.make {} ctx.handleCodeEditor
               ]
           , HH.div [ HP.class_ $ ClassName "col-span-2" ]
               [ HH.slot_ (Proxy :: _ "debugger") unit Debugger.make {} ]

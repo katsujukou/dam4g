@@ -9,7 +9,7 @@ import DAM4G.Compiler.Backend.CodeGen.ObjectFile as ObjectFile
 import DAM4G.Compiler.Backend.CodeLabel (CodeLabel(..))
 import DAM4G.Compiler.Backend.Instruction (Instruction(..))
 import DAM4G.Compiler.Backend.Program (CodeSection(..), Program(..))
-import DAM4G.Compiler.Value (Constant(..))
+import DAM4G.Compiler.Types (AtomicConstant(..), BlockTag(..))
 import DAM4G.Compiler.Version (compilerVersion)
 import Data.Array (findIndex, fold, foldMap)
 import Data.Array as Array
@@ -27,7 +27,9 @@ import Data.Traversable (for)
 import Data.Tuple (snd)
 import Data.Tuple.Nested ((/\))
 import Effect (Effect)
-import Partial.Unsafe (unsafeCrashWith)
+import Effect.Class.Console (logShow)
+import Effect.Unsafe (unsafePerformEffect)
+import Partial.Unsafe (unsafeCrashWith, unsafePartial)
 
 emit :: GdoFile -> Effect ArrayBuffer
 emit (GdoFile gdofile) = do
@@ -158,11 +160,13 @@ mkGdoFile (Program p) = do
 
   writeLabels :: Array String -> Int -> Map.Map CodeLabel Int -> Array (Array Int)
   writeLabels namespaces identOfs = Map.toUnfoldable
-    >>> map \((CodeLabel ns lbl) /\ ofs) ->
-      [ fromMaybe (-1) (ns >>= \name -> findIndex (_ == name) namespaces)
-      , lbl
-      , identOfs + ofs
-      ]
+    >>> map
+      ( unsafePartial \((CodeLabel ns lbl) /\ ofs) ->
+          [ fromMaybe (-1) (ns >>= \name -> findIndex (_ == name) namespaces)
+          , lbl
+          , identOfs + ofs
+          ]
+      )
 
   resolveLabels :: _ Instruction -> Map.Map CodeLabel Int
   resolveLabels code = code
@@ -185,16 +189,20 @@ opcode ofs lblIndices namespaces =
   case _ of
     KNoop -> [ Byte 0xFE ]
     KStop -> [ Byte 0xFF ]
+    KExit -> [ Byte 0xEE ]
     KLabel _ -> []
 
     KQuote cst -> case cst of
-      CstBool true -> [ Byte 0xC0, Byte 0x01 ]
-      CstBool false -> [ Byte 0xC0, Byte 0x00 ]
-      CstInt n -> [ Byte 0xC1, Word n ]
+      ACUnit -> []
+      ACBool true -> [ Byte 0xC0, Byte 0x01 ]
+      ACBool false -> [ Byte 0xC0, Byte 0x00 ]
+      ACInt n -> [ Byte 0xC1, Word n ]
     KGetGlobal sym -> [ Byte 0xC8, Sym (unwrap sym) ]
     KSetGlobal sym -> [ Byte 0xC9, Sym (unwrap sym) ]
     KField n -> [ Byte 0xCA, Byte n ]
+    KMakeBlock tag n -> [ Byte 0xCB, tagByte tag, Byte n ]
 
+    KClosure NoLabel -> unsafeCrashWith "Impossible: Closure referencing not-a-label"
     KClosure (CodeLabel Nothing _) -> unsafeCrashWith "Impossible: Closure referencing null-namespace label"
     KClosure (CodeLabel (Just ns) lbl)
       | Just n <- Array.findIndex (_ == ns) namespaces ->
@@ -229,24 +237,38 @@ opcode ofs lblIndices namespaces =
     K_log_xor -> [ Byte 0xAC ]
     K_log_not -> [ Byte 0xAD ]
 
-    KBranch lbl -> resolveRelative 0xB0 lbl
-    KBranchIf lbl -> resolveRelative 0xB1 lbl
-    KBranchIfNot lbl -> resolveRelative 0xB2 lbl
+    KBranch lbl -> resolveRelative [ Byte 0xB0 ] lbl
+    KBranchIf lbl -> resolveRelative [ Byte 0xB1 ] lbl
+    KBranchIfNot lbl -> resolveRelative [ Byte 0xB2 ] lbl
+    KBranchIfNotImm cst lbl -> case cst of
+      ACInt n -> resolveRelative [ Byte 0xB4, Word n ] lbl
+      ACBool true -> resolveRelative [ Byte 0xB3, Byte 1 ] lbl
+      ACBool false -> resolveRelative [ Byte 0xB3, Byte 0 ] lbl
+      _ -> unsafeCrashWith "Impossible: KBranchIfNotImm unit"
+    KBranchIfNotTag tag lbl -> resolveRelative [ Byte 0xB5, Byte tag ] lbl
+    KBranchIfEqTag tag lbl -> resolveRelative [ Byte 0xB6, Byte tag ] lbl
   where
-  resolveRelative byte lbl =
+  resolveRelative bytes lbl =
     case Map.lookup lbl lblIndices of
-      Just n -> [ Byte byte, HalfWord (n - ofs) ]
-      _ -> unsafeCrashWith "Impossible"
+      Just n -> bytes <> [ HalfWord (n - ofs) ]
+      _ -> unsafeCrashWith "Impossible!"
+
+  tagByte :: BlockTag -> Bytecode
+  tagByte = case _ of
+    TTuple -> Byte 0
+    TConstr tag -> Byte tag
 
 opcodeBytes :: Instruction -> Int
 opcodeBytes = case _ of
   KLabel _ -> 0
   KQuote cst -> case cst of
-    CstBool _ -> 2
-    CstInt _ -> 5
+    ACUnit -> 0
+    ACBool _ -> 2
+    ACInt _ -> 5
   KGetGlobal _ -> 5
   KSetGlobal _ -> 5
   KField _ -> 2
+  KMakeBlock _ _ -> 3
   KAccess _ -> 2
   KClosure _ -> 5
   KEndLet _ -> 2
@@ -256,4 +278,7 @@ opcodeBytes = case _ of
   KBranch _ -> 3
   KBranchIf _ -> 3
   KBranchIfNot _ -> 3
+  KBranchIfNotImm _ _ -> 7
+  KBranchIfNotTag _ _ -> 4
+  KBranchIfEqTag _ _ -> 4
   _ -> 1

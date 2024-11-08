@@ -2,15 +2,14 @@ module DAM4G.Compiler.Syntax.CST where
 
 import Prelude
 
-import DAM4G.Compiler.Constant (AtomicConstant)
 import DAM4G.Compiler.Name (Ident, ModuleName, OperatorName)
 import DAM4G.Compiler.Syntax.Source (SourceLoc)
 import DAM4G.Compiler.Syntax.Source as Source
-import DAM4G.Compiler.Types (Associativity)
+import DAM4G.Compiler.Types (Associativity, AtomicConstant)
 import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Generic.Rep (class Generic)
 import Data.Maybe (Maybe)
-import Data.Newtype (class Newtype)
+import Data.Newtype (class Newtype, unwrap)
 import Data.Show.Generic (genericShow)
 import Fmt as Fmt
 
@@ -69,6 +68,48 @@ derive instance genericKeyword :: Generic Keyword _
 instance showKeyword :: Show Keyword where
   show = genericShow
 
+printToken :: Token -> String
+printToken = case _ of
+  TokLeftParens -> "("
+  TokRightParens -> ")"
+  TokLeftBrace -> "{"
+  TokRightBrace -> "}"
+  TokLeftSquare -> "["
+  TokRightSquare -> "]"
+  TokDot -> "."
+  TokComma -> ","
+  TokEqual -> "="
+  TokColon -> ":"
+  TokSemicolon -> ";"
+  TokUnderscore -> "_"
+  TokPipe -> "|"
+  TokRightArrow -> "->"
+  TokReserved kw -> case kw of
+    KW_if -> "if"
+    KW_then -> "then"
+    KW_else -> "else"
+    KW_let -> "let"
+    KW_rec -> "rec"
+    KW_and -> "and"
+    KW_in -> "in"
+    KW_fn -> "fn"
+    KW_match -> "match"
+    KW_with -> "with"
+    KW_matchfn -> "matchfn"
+    KW_def -> "def"
+    KW_type -> "type"
+    KW_alias -> "alias"
+    KW_as -> "as"
+    KW_of -> "of"
+
+  TokOperator op -> op
+  TokIdent ident -> unwrap ident
+  TokUnit -> "()"
+  TokInt s _ -> s
+  TokBool s _ -> s
+  TokString s _ -> s
+  TokEOF -> "<eof>"
+
 type SourceToken = SourcePhrase Token
 
 data Recursivity = Rec | NonRec
@@ -124,8 +165,9 @@ data Pattern a
   = PatWildcard a
   | PatVar a Ident
   | PatConst a AtomicConstant
+  | PatTuple a (Array (Pattern a))
   | PatList a (Array (Pattern a))
-  | PatConstructor a (Maybe ModuleName) Ident (Array (Pattern a))
+  | PatConstructor a (Maybe ModuleName) Ident (Maybe (Pattern a))
   | PatAlias a (Pattern a) Ident
   | PatParensed a (Pattern a)
   | PatTyped a (Pattern a) (Type_ a)
@@ -180,6 +222,7 @@ patternAnn = case _ of
   PatWildcard a -> a
   PatVar a _ -> a
   PatConst a _ -> a
+  PatTuple a _ -> a
   PatList a _ -> a
   PatConstructor a _ _ _ -> a
   PatAlias a _ _ -> a
