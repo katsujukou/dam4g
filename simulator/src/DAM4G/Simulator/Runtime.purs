@@ -325,19 +325,22 @@ step m = case _ of
       Nothing -> m.error StackOutOfRange
       Just v -> m.loadAccum v *> m.progress
 
-  -- KBranch ofs -> m.jumpTo ofs
-  -- KBranchIf ofs -> do
-  --   v <- m.readAccum
-  --   case v of
-  --     Imd 0 -> m.progress
-  --     Imd _ -> m.jumpTo ofs
-  --     _ -> m.error NotANumericValue
-  -- KBranchIfNot ofs -> do
-  --   v <- m.readAccum
-  --   case v of
-  --     Imd 0 -> m.jumpTo ofs
-  --     Imd _ -> m.progress
-  --     _ -> m.error NotANumericValue
+  KBranch ofs -> m.jumpTo ofs
+
+  KBranchIf ofs -> do
+    v <- m.readAccum
+    case v of
+      Imd 0 -> m.progress
+      Imd _ -> m.jumpTo ofs
+      _ -> m.error NotANumericValue
+
+  KBranchIfNot ofs -> do
+    v <- m.readAccum
+    case v of
+      Imd 0 -> m.jumpTo ofs
+      Imd _ -> m.progress
+      _ -> m.error NotANumericValue
+
   KBranchIfNotImm cst (Right ofs) -> do
     a <- m.readAccum
     case a, cst of
