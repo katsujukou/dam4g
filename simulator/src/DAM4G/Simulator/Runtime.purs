@@ -282,19 +282,19 @@ step m = case _ of
                       *> m.jumpTo fptr
               _ -> m.error $ NotAPointer
 
-  -- KTailApply -> do
-  --   acc <- m.readAccum
-  --   m.popArg >>= case acc, _ of
-  --     -- _, Left err -> m.error err
-  --     -- Ptr p, Right arg -> do
-  --     --   derefClosure p >>= case _ of
-  --     --     Left err -> m.error err
-  --     --     Right (Closure fptr env) -> do
-  --     --       m.setEnv env
-  --     --       pushEnv arg >>= case _ of
-  --     --         Left err -> m.error err
-  --     --         Right _ -> m.jumpTo fptr
-  --     _, _ -> m.error CallToNotAFunction
+  KTailApply -> do
+    acc <- m.readAccum
+    m.popArg >>= case acc, _ of
+      _, Left err -> m.error err
+      Ptr p, Right arg -> do
+        readClosure p >>= case _ of
+          Left err -> m.error err
+          Right { fptr, env } -> do
+            m.setEnv env
+            m.pushEnv arg >>= case _ of
+              Left err -> m.error err
+              Right _ -> m.jumpTo fptr
+      _, _ -> m.error CallToNotAFunction
 
   KLet -> do
     v <- m.readAccum
@@ -445,86 +445,6 @@ step m = case _ of
             | Tag tag sz <- mc -> pure $ Right { tag: valueOfTag tag, sz }
             | otherwise -> pure $ Left $ NotABlockTag
       _ -> pure $ Left $ NotAPointer
-  -- accessEnv :: Int -> _ (Either RuntimeError Value)
-  -- accessEnv n = unsafeCrashWith "Not implemented"
-
-  -- uncons :: Int -> Addr -> m (Either RuntimeError Value)
-  -- uncons ofs addr = do
-  --   m.dereference addr >>= case _ of
-  --     Left err -> pure $ Left err
-  --     Right elem
-  --       | Tag TCons _ <- elem -> do
-  --           m.dereference (addr + ofs) >>= case _ of
-  --             Left err -> pure $ Left err
-  --             Right elem
-  --               | Component v <- elem -> pure $ Right v
-  --               | otherwise -> pure $ Left $ NotABlockComponent
-  --       | otherwise -> pure $ Left IllegalPointerAccess
-
-  -- car :: Addr -> m (Either RuntimeError Value)
-  -- car = uncons 1
-
-  -- cdr :: Addr -> m (Either RuntimeError Addr)
-  -- cdr = uncons 2 >=> case _ of
-  --   Left err -> pure $ Left err
-  --   Right v
-  --     | Ptr addr <- v -> pure $ Right addr
-  --     | otherwise -> pure $ Left NotAPointer
-
-  -- -- derefClosure addr = do
-  -- --   m.dereference >>= case _ of 
-  -- --     Left err -> pure $ Left err
-  -- --     Right el 
-  -- --       | Tag   
-
-  -- pushEnv val = do
-  --   env1 <- m.getEnv
-  --   allocate (Cons val env1) >>= case _ of
-  --     Left err -> pure $ Left err
-  --     Right addr -> m.setEnv addr $> Right unit
-
-  -- sizeOf :: Obj -> m (Either RuntimeError Int)
-  -- sizeOf = case _ of
-  --   _ -> pure $ Right 0
-  -- -- Reserved -> pure $ Right 1
-  -- -- Cons _ _ -> pure $ Right 3
-  -- -- Closure _ e -> rmap (_ + 2) <$> sizeOfEnv e
-  -- -- where
-  -- -- sizeOfEnv :: Addr -> m (Either RuntimeError Int)
-  -- -- sizeOfEnv env = do
-  -- --   let
-  -- --     go n 0 = pure $ Right n
-  -- --     go n cdr = do
-  -- --       m.dereference cdr >>= case _ of
-  -- --         Left err -> pure $ Left err
-  -- --         Right obj
-  -- --           | Cons _ cdr <- obj -> go (n + 1) cdr
-  -- --           | otherwise -> pure $ Left NotAConsCell
-  -- --   go 0 env
-
-  -- allocate obj = do
-  --   sizeOf obj >>= case _ of
-  --     Left err -> pure $ Left err
-  --     Right sz -> do
-  --       ptr <- m.alloc sz
-  --       memcpy ptr obj
-
-  -- memcpy ptr _ = --case _ of 
-
-  --   -- Cons car cdr -> do
-  --   -- for [Tag TCons 2, car, Ptr cdr]
-  --   pure $ Right 0
-
-  -- consumeEnv :: Int -> RuntimeM m Addr
-  -- consumeEnv n = do
-  --   let
-  --     go :: Int -> Addr -> m (Either RuntimeError Addr)
-  --     go 0 addr = pure $ Right addr
-  --     go n' addr = do
-  --       cdr addr >>= case _ of
-  --         Left err -> pure $ Left err
-  --         Right addr' -> go (n' - 1) addr'
-  --   m.getEnv >>= go n
 
   evalArithmetic op = do
     a <- m.readAccum
